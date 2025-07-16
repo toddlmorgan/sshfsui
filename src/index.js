@@ -10,12 +10,17 @@ import * as window from './window.js';
 
 const appPath = app.getAppPath();
 
+// Load HTML templates
 const errorHTMLSSH = await fs.readFile(appPath + '/src/partials/error-ssh.html', { encoding: 'utf8' });
 const errorHTMLSSHFS = await fs.readFile(appPath + '/src/partials/error-sshfs.html', { encoding: 'utf8' });
 const errorHTMLTimeout = await fs.readFile(appPath + '/src/partials/error-timeout.html', { encoding: 'utf8' });
 
-app.whenReady().then(main);
+// Load icons
+const icon = nativeImage.createFromPath(appPath + '/assets/tray.png');
+const iconDisconnected = nativeImage.createFromPath(appPath + '/assets/disconnected.png');
+const iconConnected = nativeImage.createFromPath(appPath + '/assets/connected.png');
 
+app.whenReady().then(main);
 
 async function main() {
     fixPath();
@@ -54,9 +59,6 @@ async function checkDependenciesAndMaybeReturnError() {
 }
 
 async function createTray() {
-    const icon = nativeImage.createFromPath(appPath + '/assets/tray.png');
-    const iconDisconnected = nativeImage.createFromPath(appPath + '/assets/disconnected.png');
-    const iconConnected = nativeImage.createFromPath(appPath + '/assets/connected.png');
     const tray = new Tray(icon);
 
     var items = [
