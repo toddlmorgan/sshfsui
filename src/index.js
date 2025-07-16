@@ -72,6 +72,10 @@ async function updateTray(tray) {
             label: 'SSHFS UI',
             enabled: false,
         },
+        {
+            label: 'v' + app.getVersion(),
+            enabled: false,
+        },
         { type: 'separator' },
     ];
 
