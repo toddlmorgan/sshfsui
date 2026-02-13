@@ -13,7 +13,8 @@ Fork of https://github.com/thekashifmalik/sshfsui — currently on branch `legac
 - **Run**: `bin/run` or `yarn start` (launches via `electron-forge start`)
 - **Test**: `bin/test` or `yarn test` (runs `node */**.test.js`)
 - **Package**: `yarn package`
-- **Build installer**: `yarn make`
+- **Build installer**: `yarn make` or `bin/build-local.sh` (auto-detects signing)
+- **Install dependencies**: `bin/install-deps.sh` (installs runtime + build prerequisites)
 
 ## Architecture
 
@@ -21,12 +22,16 @@ Fork of https://github.com/thekashifmalik/sshfsui — currently on branch `legac
 - Entry point. Initializes app, creates system tray with dynamic menu, sets up IPC listeners for `'add'` and `'edit'` events.
 - Checks for `ssh`, `sshfs`, `timeout` binaries at startup; shows error window if missing.
 - Tray menu is rebuilt via `updateTray()` after every connect/disconnect/add/delete.
+- IPC handlers pass `authType` and `password` through to config CRUD functions.
 
 **Config & Target model** (`src/config.js`):
-- `Target` class: `constructor(name, url, mount)` with methods `status()`, `connect()`, `testSSH()`, `disconnect()`, `cleanupSSHFS()`.
-- Config stored as flat files in `~/.sshfsui/{target-name}/` with `target` (URL) and `mount` (path) files.
-- `fetchOrCreateEmptyConfig()`, `addTarget(name, url, mount)`, `deleteTarget(name)` — CRUD operations.
+- `Target` class: `constructor(name, url, mount, authType = 'key')` with methods `status()`, `connect()`, `testSSH()`, `disconnect()`, `cleanupSSHFS()`, `_decryptPassword()`.
+- Config stored as flat files in `~/.sshfsui/{target-name}/` with `target` (URL), `mount` (path), `auth` (type), and optionally `credential` (encrypted password) files.
+- `fetchOrCreateEmptyConfig()`, `addTarget(name, url, mount, authType, password)`, `deleteTarget(name)` — CRUD operations.
 - Shell commands via `util.promisify(child_process.exec)` with `timeout` wrapper.
+- Password auth: `connect()` uses `sshfs -o password_stdin` via `child_process.spawn` to pipe password via stdin (never exposed in process listing). `testSSH()` uses `sshpass -e` with `SSHPASS` env var.
+- Passwords encrypted/decrypted via Electron's `safeStorage` API (backed by macOS Keychain). Credential files written with mode `0600`.
+- Backward compatible: missing `auth` file defaults to `'key'` type.
 
 **Window factory** (`src/window.js`):
 - `create(file, width, height, loadData)` — creates BrowserWindow with preload, sends `loadData` via IPC `'load'` event.
@@ -35,12 +40,18 @@ Fork of https://github.com/thekashifmalik/sshfsui — currently on branch `legac
 - CommonJS (required by Electron). Exposes `electronAPI` via `contextBridge`: `sendAdd`, `sendEdit`, `onLoad`.
 
 **Renderer** (`src/renderer/`):
-- `add.html/js` — form for new targets (name, url, mount). Sends via `electronAPI.sendAdd()`.
-- `edit.html/js` — edit form. Receives target data via `onLoad`, sends via `electronAPI.sendEdit()`.
-- `index.css` — shared styles using inline-block label/input layout (30%/46% widths).
+- `add.html/js` — form for new targets (name, url, mount, authType, password). Auth type select toggles password field visibility. Sends via `electronAPI.sendAdd()`.
+- `edit.html/js` — edit form. Receives target data via `onLoad`, populates auth type. Sends via `electronAPI.sendEdit()`.
+- `index.css` — shared styles using inline-block label/input/select layout (30%/46% widths).
 
 **Forge config** (`forge.config.cjs`):
 - CommonJS. Configures asar, osxSign, osxNotarize (reads APPLE_ID/APPLE_ID_PASSWORD/TEAM_ID from env via dotenv), makers for squirrel/deb/dmg, Fuses plugin.
+
+**Scripts** (`bin/`):
+- `run` — launches the app via `yarn run start`.
+- `test` — runs tests via `yarn run test`.
+- `install-deps.sh` — installs all runtime and build prerequisites (macOS via Homebrew, Linux via apt). Idempotent.
+- `build-local.sh` — builds the app locally, auto-detecting code signing certificate availability. Supports unsigned, signed, and signed+notarized builds.
 
 ## Code Style
 
@@ -57,9 +68,11 @@ Fork of https://github.com/thekashifmalik/sshfsui — currently on branch `legac
 - `command-exists` — checks for required binaries
 - `sudo-prompt` — elevated mkdir for mount points
 - `dotenv` — loads .env for signing credentials
+- `safeStorage` (Electron built-in) — encrypts/decrypts passwords via OS keychain
 
 ## Prerequisites (runtime)
 
 - `ssh` (OpenSSH)
 - `sshfs` (via macFUSE/FUSE-T on macOS, apt on Linux)
 - `timeout` (via coreutils on macOS)
+- `sshpass` (only needed for password auth; via `esolitos/ipa` Homebrew tap on macOS)
