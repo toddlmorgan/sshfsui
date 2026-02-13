@@ -45,7 +45,9 @@ Fork of https://github.com/thekashifmalik/sshfsui — currently on branch `legac
 - `index.css` — shared styles using inline-block label/input/select layout (30%/46% widths).
 
 **Forge config** (`forge.config.cjs`):
-- CommonJS. Configures asar, osxSign, osxNotarize (reads APPLE_ID/APPLE_ID_PASSWORD/TEAM_ID from env via dotenv), makers for squirrel/deb/dmg, Fuses plugin.
+- CommonJS. Configures asar, makers for squirrel/deb/dmg, Fuses plugin.
+- Conditionally enables `osxSign` and `osxNotarize` unless `SKIP_SIGNING=1` env var is set.
+- Notarization only enabled when `APPLE_ID`, `APPLE_ID_PASSWORD`, and `TEAM_ID` env vars are all present (loaded via dotenv from `.env`).
 
 **Scripts** (`bin/`):
 - `run` — launches the app via `yarn run start`.

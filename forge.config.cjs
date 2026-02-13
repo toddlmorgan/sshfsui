@@ -2,17 +2,24 @@ require('dotenv').config()
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 
-module.exports = {
-  packagerConfig: {
-    asar: true,
-    osxSign: {},
-    osxNotarize: {
+const packagerConfig = {
+  asar: true,
+};
+
+if (process.env.SKIP_SIGNING !== '1') {
+  packagerConfig.osxSign = {};
+  if (process.env.APPLE_ID && process.env.APPLE_ID_PASSWORD && process.env.TEAM_ID) {
+    packagerConfig.osxNotarize = {
       tool: 'notarytool',
       appleId: process.env.APPLE_ID,
       appleIdPassword: process.env.APPLE_ID_PASSWORD,
       teamId: process.env.TEAM_ID
-    },
-  },
+    };
+  }
+}
+
+module.exports = {
+  packagerConfig,
   rebuildConfig: {},
   makers: [
     {

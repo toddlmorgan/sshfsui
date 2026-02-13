@@ -57,8 +57,8 @@ else
     echo "WARNING: No Developer ID certificate found. Building WITHOUT code signing."
     echo "The app will run locally but cannot be distributed."
     echo ""
-    # Skip signing by removing osxSign/osxNotarize config via env
-    CSC_IDENTITY_AUTO_DISCOVERY=false yarn make
+    # Tell forge.config.cjs to skip osxSign/osxNotarize entirely
+    SKIP_SIGNING=1 yarn make
 fi
 
 echo ""
