@@ -19,6 +19,19 @@ You manage connections through the system tray menu. Each connection (called a "
 
 Once configured, connect or disconnect to any target from the tray menu with a single click.
 
+## Quick Start
+
+**For end users** (just want to use the app):
+1. Run `bin/install-deps.sh` to install prerequisites
+2. Run `bin/run` to launch the app
+3. Click the tray icon → "Add" to configure your first remote target
+
+**For developers** (building from source):
+1. Run `bin/install-deps.sh` to install prerequisites
+2. Run `bin/build-local.sh` to build the app
+3. Install: `unzip out/make/zip/darwin/x64/sshfsui-darwin-x64-*.zip && mv sshfsui.app /Applications/`
+4. Update/rebuild: Quit app, `rm -rf /Applications/sshfsui.app`, rebuild, reinstall
+
 ## Prerequisites
 
 You need the following tools installed before running sshfsui:
@@ -121,6 +134,20 @@ Your password is encrypted using your operating system's secure credential stora
 
 ## Troubleshooting
 
+### "Cannot be opened because the developer cannot be verified" (macOS)
+
+This happens with unsigned builds. To open unsigned apps:
+
+1. Right-click (or Control-click) on `sshfsui.app` in `/Applications/`
+2. Select "Open" from the context menu
+3. Click "Open" in the security dialog
+
+After the first launch, you can open the app normally. Alternatively, you can remove the quarantine attribute:
+
+```bash
+xattr -d com.apple.quarantine /Applications/sshfsui.app
+```
+
 ### "sshfs not found" error on launch
 
 Install sshfs and its FUSE dependency:
@@ -190,9 +217,9 @@ This script:
 - Installs Node.js dependencies (`yarn install`) if needed
 - Detects whether you have an Apple Developer ID certificate for code signing
 - Builds the app with appropriate settings:
-  - **With certificate + .env credentials**: Builds, signs, and notarizes the app
-  - **With certificate only**: Builds and signs (no notarization)
-  - **Without certificate**: Builds unsigned (runs locally but cannot be distributed)
+  - **With certificate + .env credentials**: Builds a signed and notarized `.dmg` installer
+  - **With certificate only**: Builds a signed `.dmg` (no notarization)
+  - **Without certificate**: Builds an unsigned `.zip` (runs locally but cannot be distributed)
 - Outputs the built artifact to `out/make/`
 
 ### Code Signing (Optional)
@@ -207,7 +234,57 @@ TEAM_ID=your-team-id
 
 You also need a "Developer ID Application" certificate installed in your macOS Keychain. See [Apple's documentation](https://developer.apple.com/support/certificates/) for details.
 
-### Manual Build Commands
+### Installing Your Local Build
+
+After running `bin/build-local.sh`, install the app:
+
+**From ZIP (unsigned builds)**:
+
+```bash
+# Extract the app
+unzip out/make/zip/darwin/x64/sshfsui-darwin-x64-0.10.0.zip
+
+# Move to Applications folder
+mv sshfsui.app /Applications/
+
+# First launch: Right-click the app and select "Open" (macOS will warn about unsigned apps)
+# After first launch, you can open it normally from the tray or Applications folder
+```
+
+**From DMG (signed builds)**:
+
+```bash
+# Open the DMG
+open out/make/sshfsui-0.10.0.dmg
+
+# Drag sshfsui.app to Applications folder in the Finder window
+```
+
+### Uninstalling / Upgrading
+
+To uninstall or upgrade to a new version:
+
+1. **Quit the app**: Click the tray icon → "Quit"
+
+2. **Remove the app bundle**:
+
+   ```bash
+   rm -rf /Applications/sshfsui.app
+   ```
+
+3. **(Optional) Remove configuration**:
+
+   Your saved targets are stored in `~/.sshfsui/`. To completely remove all data:
+
+   ```bash
+   rm -rf ~/.sshfsui
+   ```
+
+   **Warning**: This deletes all your saved targets and encrypted passwords. Only do this if you want a clean slate.
+
+4. **Install the new version**: Follow the installation steps above with your new build.
+
+### Development Workflow
 
 ```bash
 yarn install          # Install dependencies
@@ -216,6 +293,12 @@ yarn package          # Package the app (no installer)
 yarn make             # Build installer (.dmg on macOS, .deb on Linux)
 yarn test             # Run tests
 ```
+
+**Development mode** (`yarn start` or `bin/run`):
+- Launches the app without building an installer
+- Hot reloads when you make code changes
+- Shows Electron DevTools for debugging
+- Does not require installation to /Applications
 
 ## License
 

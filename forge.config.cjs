@@ -30,12 +30,18 @@ module.exports = {
       name: '@electron-forge/maker-deb',
       config: {},
     },
-    {
-      name: '@electron-forge/maker-dmg',
-      config: {
-        format: 'ULFO',
-      },
-    }
+    process.env.SKIP_SIGNING === '1'
+      ? {
+          name: '@electron-forge/maker-zip',
+          platforms: ['darwin'],
+          config: {},
+        }
+      : {
+          name: '@electron-forge/maker-dmg',
+          config: {
+            format: 'ULFO',
+          },
+        }
   ],
   plugins: [
     {
