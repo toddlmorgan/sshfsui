@@ -9,7 +9,8 @@ form {
 }
 
 label,
-input {
+input,
+select {
     display: inline-block;
 }
 
@@ -18,11 +19,22 @@ label {
     text-align: right;
 }
 
-label+input {
+label+input,
+label+select {
     width: 46%;
     margin: 0 10% 2% 4%;
 }
 
-input+input {
+#password-row label {
+    width: 30%;
+    text-align: right;
+}
+
+#password-row input {
+    width: 46%;
+    margin: 0 10% 2% 4%;
+}
+
+input[type="submit"] {
     float: right;
 }

@@ -19,6 +19,17 @@
         <label for="mount">Mount Path:</label>
         <input required type="text" name="mount">
 
+        <label for="authType">Auth Type:</label>
+        <select name="authType">
+            <option value="key">SSH Key (default)</option>
+            <option value="password">Password</option>
+        </select>
+
+        <div id="password-row" style="display: none;">
+            <label for="password">Password:</label>
+            <input type="password" name="password">
+        </div>
+
         <input type="submit" value="Edit">
     </form>
 </body>

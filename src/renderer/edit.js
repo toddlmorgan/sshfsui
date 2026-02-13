@@ -1,4 +1,8 @@
 const form = document.querySelector("#edit");
+const authSelect = form.querySelector('select[name="authType"]');
+const passwordRow = document.querySelector('#password-row');
+const passwordInput = form.querySelector('input[name="password"]');
+
 window.electronAPI.onLoad(setInitialData);
 
 let initialName;
@@ -8,7 +12,19 @@ function setInitialData(event, data) {
     form.querySelector('input[name="name"]').value = data.name;
     form.querySelector('input[name="url"]').value = data.url;
     form.querySelector('input[name="mount"]').value = data.mount;
+    if (data.authType) {
+        authSelect.value = data.authType;
+    }
+    const isPassword = authSelect.value === 'password';
+    passwordRow.style.display = isPassword ? '' : 'none';
+    passwordInput.required = isPassword;
 }
+
+authSelect.addEventListener('change', () => {
+    const isPassword = authSelect.value === 'password';
+    passwordRow.style.display = isPassword ? '' : 'none';
+    passwordInput.required = isPassword;
+});
 
 form.addEventListener('submit', sendEditDataAndCloseWindow);
 
@@ -20,6 +36,8 @@ function sendEditDataAndCloseWindow(event) {
             name: form.querySelector('input[name="name"]').value,
             url: form.querySelector('input[name="url"]').value,
             mount: form.querySelector('input[name="mount"]').value,
+            authType: authSelect.value,
+            password: passwordInput.value || null,
         }
     };
     window.electronAPI.sendEdit(data);

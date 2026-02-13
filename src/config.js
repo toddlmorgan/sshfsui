@@ -6,6 +6,7 @@ import path from "path";
 import untildify from "untildify";
 import * as sudo from "sudo-prompt";
 import { kill } from "process";
+import { safeStorage } from "electron";
 
 const exec = util.promisify(child_process.exec)
 
@@ -13,10 +14,11 @@ const configDir = os.homedir() + '/.sshfsui'
 
 
 class Target {
-    constructor(name, url, mount) {
+    constructor(name, url, mount, authType = 'key') {
         this.name = name;
         this.url = url;
         this.mount = mount;
+        this.authType = authType;
     }
 
     async status() {
@@ -30,7 +32,24 @@ class Target {
     async connect() {
         await this.testSSH();
         try {
-            await exec(`timeout 3 sshfs ${this.url} ${this.mount}`);
+            if (this.authType === 'password') {
+                const password = this._decryptPassword();
+                await new Promise((resolve, reject) => {
+                    const proc = child_process.spawn('timeout', ['3', 'sshfs', '-o', 'password_stdin', this.url, this.mount], {
+                        stdio: ['pipe', 'pipe', 'pipe']
+                    });
+                    proc.stdin.write(password + '\n');
+                    proc.stdin.end();
+                    let stderr = '';
+                    proc.stderr.on('data', (data) => { stderr += data; });
+                    proc.on('close', (code) => {
+                        if (code === 0) resolve();
+                        else reject(new Error(stderr || `sshfs exited with code ${code}`));
+                    });
+                });
+            } else {
+                await exec(`timeout 3 sshfs ${this.url} ${this.mount}`);
+            }
         } catch (e) {
             try {
                 await this.disconnect();
@@ -45,7 +64,20 @@ class Target {
     async testSSH() {
         const parts = this.url.split(':');
         const host = parts[0];
-        await exec(`timeout 3 ssh ${host} echo ping`);
+        if (this.authType === 'password') {
+            const password = this._decryptPassword();
+            await exec(`sshpass -e timeout 3 ssh ${host} echo ping`, {
+                env: { ...process.env, SSHPASS: password }
+            });
+        } else {
+            await exec(`timeout 3 ssh ${host} echo ping`);
+        }
+    }
+
+    _decryptPassword() {
+        const credPath = configDir + '/' + this.name + '/credential';
+        const encrypted = fs.readFileSync(credPath);
+        return safeStorage.decryptString(encrypted);
     }
 
     async cleanupSSHFS() {
@@ -86,7 +118,13 @@ function fetchConfig() {
         const base = configDir + '/' + name + '/';
         const targetURL = fs.readFileSync(base + "target", { encoding: 'utf8' }).trim();
         const targetMount = fs.readFileSync(base + "mount", { encoding: 'utf8' }).trim();
-        const t = new Target(name, targetURL, targetMount)
+        let authType = 'key';
+        try {
+            authType = fs.readFileSync(base + "auth", { encoding: 'utf8' }).trim();
+        } catch {
+            // Default to key-based auth for backward compatibility
+        }
+        const t = new Target(name, targetURL, targetMount, authType)
         config.push(t);
     }
     return config;
@@ -97,11 +135,16 @@ function createEmptyConfig() {
 }
 
 
-export function addTarget(name, url, mount) {
+export function addTarget(name, url, mount, authType = 'key', password = null) {
     const targetBase = configDir + '/' + name;
     fs.mkdirSync(targetBase);
     fs.writeFileSync(targetBase + "/target", url, { encoding: 'utf8' });
     fs.writeFileSync(targetBase + "/mount", mount, { encoding: 'utf8' });
+    fs.writeFileSync(targetBase + "/auth", authType, { encoding: 'utf8' });
+    if (authType === 'password' && password) {
+        const encrypted = safeStorage.encryptString(password);
+        fs.writeFileSync(targetBase + "/credential", encrypted, { mode: 0o600 });
+    }
 
     const absolutePath = untildify(mount);
     if (!fs.existsSync(absolutePath)) {
