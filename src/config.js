@@ -14,11 +14,27 @@ const configDir = os.homedir() + '/.sshfsui'
 
 
 class Target {
-    constructor(name, url, mount, authType = 'key') {
+    constructor(name, url, mount, authType = 'key', port = '', identityFile = '') {
         this.name = name;
         this.url = url;
         this.mount = mount;
         this.authType = authType;
+        this.port = port;
+        this.identityFile = identityFile;
+    }
+
+    _sshOpts() {
+        const sshFlags = [];
+        const sshfsFlags = [];
+        if (this.port) {
+            sshFlags.push('-p', this.port);
+            sshfsFlags.push('-p', this.port);
+        }
+        if (this.identityFile) {
+            sshFlags.push('-i', this.identityFile);
+            sshfsFlags.push('-o', `IdentityFile=${this.identityFile}`);
+        }
+        return { sshFlags, sshfsFlags };
     }
 
     async status() {
@@ -31,11 +47,13 @@ class Target {
 
     async connect() {
         await this.testSSH();
+        const { sshfsFlags } = this._sshOpts();
         try {
             if (this.authType === 'password') {
                 const password = this._decryptPassword();
+                const args = ['3', 'sshfs', ...sshfsFlags, '-o', 'password_stdin', this.url, this.mount];
                 await new Promise((resolve, reject) => {
-                    const proc = child_process.spawn('timeout', ['3', 'sshfs', '-o', 'password_stdin', this.url, this.mount], {
+                    const proc = child_process.spawn('timeout', args, {
                         stdio: ['pipe', 'pipe', 'pipe']
                     });
                     proc.stdin.write(password + '\n');
@@ -48,7 +66,8 @@ class Target {
                     });
                 });
             } else {
-                await exec(`timeout 3 sshfs ${this.url} ${this.mount}`);
+                const flagStr = sshfsFlags.length ? sshfsFlags.join(' ') + ' ' : '';
+                await exec(`timeout 3 sshfs ${flagStr}${this.url} ${this.mount}`);
             }
         } catch (e) {
             try {
@@ -64,13 +83,15 @@ class Target {
     async testSSH() {
         const parts = this.url.split(':');
         const host = parts[0];
+        const { sshFlags } = this._sshOpts();
+        const flagStr = sshFlags.length ? sshFlags.join(' ') + ' ' : '';
         if (this.authType === 'password') {
             const password = this._decryptPassword();
-            await exec(`sshpass -e timeout 3 ssh ${host} echo ping`, {
+            await exec(`sshpass -e timeout 3 ssh ${flagStr}${host} echo ping`, {
                 env: { ...process.env, SSHPASS: password }
             });
         } else {
-            await exec(`timeout 3 ssh ${host} echo ping`);
+            await exec(`timeout 3 ssh ${flagStr}${host} echo ping`);
         }
     }
 
@@ -124,7 +145,19 @@ function fetchConfig() {
         } catch {
             // Default to key-based auth for backward compatibility
         }
-        const t = new Target(name, targetURL, targetMount, authType)
+        let port = '';
+        try {
+            port = fs.readFileSync(base + "port", { encoding: 'utf8' }).trim();
+        } catch {
+            // Default to empty (use SSH default port 22)
+        }
+        let identityFile = '';
+        try {
+            identityFile = fs.readFileSync(base + "identity", { encoding: 'utf8' }).trim();
+        } catch {
+            // Default to empty (use SSH default key search)
+        }
+        const t = new Target(name, targetURL, targetMount, authType, port, identityFile)
         config.push(t);
     }
     return config;
@@ -135,7 +168,7 @@ function createEmptyConfig() {
 }
 
 
-export function addTarget(name, url, mount, authType = 'key', password = null) {
+export function addTarget(name, url, mount, authType = 'key', password = null, port = '', identityFile = '') {
     const targetBase = configDir + '/' + name;
     fs.mkdirSync(targetBase);
     fs.writeFileSync(targetBase + "/target", url, { encoding: 'utf8' });
@@ -144,6 +177,12 @@ export function addTarget(name, url, mount, authType = 'key', password = null) {
     if (authType === 'password' && password) {
         const encrypted = safeStorage.encryptString(password);
         fs.writeFileSync(targetBase + "/credential", encrypted, { mode: 0o600 });
+    }
+    if (port) {
+        fs.writeFileSync(targetBase + "/port", port, { encoding: 'utf8' });
+    }
+    if (identityFile) {
+        fs.writeFileSync(targetBase + "/identity", identityFile, { encoding: 'utf8' });
     }
 
     const absolutePath = untildify(mount);

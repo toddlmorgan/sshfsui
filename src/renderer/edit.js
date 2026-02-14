@@ -12,6 +12,8 @@ function setInitialData(event, data) {
     form.querySelector('input[name="name"]').value = data.name;
     form.querySelector('input[name="url"]').value = data.url;
     form.querySelector('input[name="mount"]').value = data.mount;
+    form.querySelector('input[name="port"]').value = data.port || '';
+    form.querySelector('input[name="identityFile"]').value = data.identityFile || '';
     if (data.authType) {
         authSelect.value = data.authType;
     }
@@ -36,6 +38,8 @@ function sendEditDataAndCloseWindow(event) {
             name: form.querySelector('input[name="name"]').value,
             url: form.querySelector('input[name="url"]').value,
             mount: form.querySelector('input[name="mount"]').value,
+            port: form.querySelector('input[name="port"]').value || '',
+            identityFile: form.querySelector('input[name="identityFile"]').value || '',
             authType: authSelect.value,
             password: passwordInput.value || null,
         }

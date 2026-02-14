@@ -17,6 +17,8 @@ function sendAddDataAndCloseWindow(event) {
         name: form.querySelector('input[name="name"]').value,
         url: form.querySelector('input[name="url"]').value,
         mount: form.querySelector('input[name="mount"]').value,
+        port: form.querySelector('input[name="port"]').value || '',
+        identityFile: form.querySelector('input[name="identityFile"]').value || '',
         authType: authSelect.value,
         password: passwordInput.value || null,
     };

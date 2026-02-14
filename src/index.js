@@ -34,11 +34,11 @@ async function main() {
     await updateTray(tray);
 
     ipcMain.on('add', (event, data) => {
-        config.addTarget(data.name, data.url, data.mount, data.authType, data.password);
+        config.addTarget(data.name, data.url, data.mount, data.authType, data.password, data.port, data.identityFile);
     });
     ipcMain.on('edit', (event, data) => {
         config.deleteTarget(data.initialName);
-        config.addTarget(data.target.name, data.target.url, data.target.mount, data.target.authType, data.target.password);
+        config.addTarget(data.target.name, data.target.url, data.target.mount, data.target.authType, data.target.password, data.target.port, data.target.identityFile);
     });
     app.on('window-all-closed', () => {
         updateTray(tray);
@@ -115,7 +115,7 @@ async function updateTray(tray) {
                     label: 'Edit',
                     enabled: !await target.status(),
                     click: async () => {
-                        await window.create('src/renderer/edit.html', 360, 220, target);
+                        await window.create('src/renderer/edit.html', 360, 300, target);
                     },
                 },
                 {
@@ -134,7 +134,7 @@ async function updateTray(tray) {
         {
             label: 'Add',
             click: async () => {
-                await window.create('src/renderer/add.html', 360, 220);
+                await window.create('src/renderer/add.html', 360, 300);
             },
         },
         { label: 'Quit', click: app.quit },

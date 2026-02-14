@@ -28,16 +28,17 @@ Fork of https://github.com/thekashifmalik/sshfsui — currently on branch `legac
 - Entry point. Initializes app, creates system tray with dynamic menu, sets up IPC listeners for `'add'` and `'edit'` events.
 - Checks for `ssh`, `sshfs`, `timeout` binaries at startup; shows error window if missing.
 - Tray menu is rebuilt via `updateTray()` after every connect/disconnect/add/delete.
-- IPC handlers pass `authType` and `password` through to config CRUD functions.
+- IPC handlers pass `authType`, `password`, `port`, and `identityFile` through to config CRUD functions.
 
 **Config & Target model** (`src/config.js`):
-- `Target` class: `constructor(name, url, mount, authType = 'key')` with methods `status()`, `connect()`, `testSSH()`, `disconnect()`, `cleanupSSHFS()`, `_decryptPassword()`.
-- Config stored as flat files in `~/.sshfsui/{target-name}/` with `target` (URL), `mount` (path), `auth` (type), and optionally `credential` (encrypted password) files.
-- `fetchOrCreateEmptyConfig()`, `addTarget(name, url, mount, authType, password)`, `deleteTarget(name)` — CRUD operations.
+- `Target` class: `constructor(name, url, mount, authType = 'key', port = '', identityFile = '')` with methods `status()`, `connect()`, `testSSH()`, `disconnect()`, `cleanupSSHFS()`, `_decryptPassword()`, `_sshOpts()`.
+- `_sshOpts()` builds SSH/SSHFS flags from `port` and `identityFile` (empty values produce no flags for backward compat).
+- Config stored as flat files in `~/.sshfsui/{target-name}/` with `target` (URL), `mount` (path), `auth` (type), and optionally `credential` (encrypted password), `port`, and `identity` files.
+- `fetchOrCreateEmptyConfig()`, `addTarget(name, url, mount, authType, password, port, identityFile)`, `deleteTarget(name)` — CRUD operations.
 - Shell commands via `util.promisify(child_process.exec)` with `timeout` wrapper.
 - Password auth: `connect()` uses `sshfs -o password_stdin` via `child_process.spawn` to pipe password via stdin (never exposed in process listing). `testSSH()` uses `sshpass -e` with `SSHPASS` env var.
 - Passwords encrypted/decrypted via Electron's `safeStorage` API (backed by macOS Keychain). Credential files written with mode `0600`.
-- Backward compatible: missing `auth` file defaults to `'key'` type.
+- Backward compatible: missing `auth` file defaults to `'key'` type; missing `port`/`identity` files default to `''` (use SSH defaults).
 
 **Window factory** (`src/window.js`):
 - `create(file, width, height, loadData)` — creates BrowserWindow with preload, sends `loadData` via IPC `'load'` event.
