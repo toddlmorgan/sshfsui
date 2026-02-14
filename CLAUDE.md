@@ -10,11 +10,17 @@ Fork of https://github.com/thekashifmalik/sshfsui — currently on branch `legac
 
 ## Commands
 
-- **Run**: `bin/run` or `yarn start` (launches via `electron-forge start`)
-- **Test**: `bin/test` or `yarn test` (runs `node */**.test.js`)
+**Development (recommended)**:
+- **First-time setup**: `bin/install-local.sh` (deps → build → install to ~/Applications)
+- **Update after changes**: `bin/update-local.sh` (quit → rebuild → reinstall)
+- **Quick test**: `bin/run` or `yarn start` (dev mode, no install needed)
+- **Run tests**: `bin/test` or `yarn test`
+
+**Manual/CI**:
+- **Install dependencies**: `bin/install-deps.sh`
+- **Build only**: `bin/build-local.sh` (outputs to `out/make/`)
 - **Package**: `yarn package`
-- **Build installer**: `yarn make` or `bin/build-local.sh` (auto-detects signing)
-- **Install dependencies**: `bin/install-deps.sh` (installs runtime + build prerequisites)
+- **Build installer**: `yarn make`
 
 ## Architecture
 
@@ -51,10 +57,14 @@ Fork of https://github.com/thekashifmalik/sshfsui — currently on branch `legac
 - Notarization only enabled when `APPLE_ID`, `APPLE_ID_PASSWORD`, and `TEAM_ID` env vars are all present (loaded via dotenv from `.env`).
 
 **Scripts** (`bin/`):
-- `run` — launches the app via `yarn run start`.
+- `run` — launches the app in development mode via `yarn run start`.
 - `test` — runs tests via `yarn run test`.
 - `install-deps.sh` — installs all runtime and build prerequisites (macOS via Homebrew, Linux via apt). Idempotent.
-- `build-local.sh` — builds the app locally, auto-detecting code signing certificate availability. Supports unsigned, signed, and signed+notarized builds.
+- `build-local.sh` — builds the app locally, auto-detecting code signing certificate availability. Outputs to `out/make/`.
+- `install-local.sh` — **convenience**: runs `install-deps.sh` + `build-local.sh`, then installs to `~/Applications/`. First-time setup.
+- `update-local.sh` — **convenience**: quits running app, rebuilds, and reinstalls to `~/Applications/`. Development iteration.
+  - Multiple safety guardrails: verifies project directory, hardcoded app path, validates app bundle structure before deletion.
+  - Only deletes from `~/Applications/sshfsui.app` (never `/Applications` or other locations).
 
 ## Code Style
 

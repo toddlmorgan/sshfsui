@@ -27,10 +27,21 @@ Once configured, connect or disconnect to any target from the tray menu with a s
 3. Click the tray icon → "Add" to configure your first remote target
 
 **For developers** (building from source):
-1. Run `bin/install-deps.sh` to install prerequisites
-2. Run `bin/build-local.sh` to build the app
-3. Install: `unzip out/make/zip/darwin/x64/sshfsui-darwin-x64-*.zip && mv sshfsui.app /Applications/`
-4. Update/rebuild: Quit app, `rm -rf /Applications/sshfsui.app`, rebuild, reinstall
+
+First time setup:
+```bash
+bin/install-local.sh  # Installs deps, builds, and installs to ~/Applications/
+```
+
+Update after making changes:
+```bash
+bin/update-local.sh   # Quits app, rebuilds, and reinstalls
+```
+
+Or manually:
+```bash
+bin/build-local.sh    # Just build (output in out/make/)
+```
 
 ## Prerequisites
 
@@ -286,19 +297,31 @@ To uninstall or upgrade to a new version:
 
 ### Development Workflow
 
+**Recommended** (uses convenience scripts):
+
 ```bash
-yarn install          # Install dependencies
+bin/install-local.sh  # First time: deps + build + install to ~/Applications/
+bin/update-local.sh   # After changes: quit + rebuild + reinstall
+bin/run               # Test without installing (development mode)
+```
+
+**Manual commands** (lower level):
+
+```bash
+bin/install-deps.sh   # Install system dependencies
+bin/build-local.sh    # Build only (output in out/make/)
+yarn install          # Install Node dependencies
 yarn start            # Run in development mode
 yarn package          # Package the app (no installer)
 yarn make             # Build installer (.dmg on macOS, .deb on Linux)
 yarn test             # Run tests
 ```
 
-**Development mode** (`yarn start` or `bin/run`):
-- Launches the app without building an installer
+**Development mode** (`bin/run` or `yarn start`):
+- Launches the app without building/installing
 - Hot reloads when you make code changes
 - Shows Electron DevTools for debugging
-- Does not require installation to /Applications
+- Perfect for rapid iteration
 
 ## License
 
