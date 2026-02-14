@@ -204,6 +204,27 @@ export function addTarget(name, url, mount, authType = 'key', password = null, p
 }
 
 
+export async function testSSHConnection(url, port, identityFile, authType, password) {
+    const parts = url.split(':');
+    const host = parts[0];
+    const sshFlags = [];
+    if (port) {
+        sshFlags.push('-p', port);
+    }
+    if (identityFile) {
+        sshFlags.push('-i', identityFile);
+    }
+    const flagStr = sshFlags.length ? sshFlags.join(' ') + ' ' : '';
+    if (authType === 'password' && password) {
+        await exec(`sshpass -e timeout 5 ssh ${flagStr}${host} echo ping`, {
+            env: { ...process.env, SSHPASS: password }
+        });
+    } else {
+        await exec(`timeout 5 ssh ${flagStr}${host} echo ping`);
+    }
+}
+
+
 export function deleteTarget(name) {
     const target = configDir + '/' + name;
     fs.rmSync(target, {recursive: true});

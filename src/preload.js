@@ -4,4 +4,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     sendAdd: (data) => ipcRenderer.send('add', data),
     onLoad: (handler) => ipcRenderer.on('load', handler),
     sendEdit: (data) => ipcRenderer.send('edit', data),
+    validateTarget: (data) => ipcRenderer.invoke('validate', data),
+    testConnection: (data) => ipcRenderer.invoke('test-connection', data),
 })

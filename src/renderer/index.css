@@ -35,6 +35,43 @@ label+select {
     margin: 0 10% 2% 4%;
 }
 
+#status-message {
+    margin: 8px 0;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+#status-message:empty {
+    display: none;
+}
+
+#status-message.error {
+    color: #c00;
+    background: #fee;
+    border: 1px solid #fcc;
+}
+
+#status-message.success {
+    color: #060;
+    background: #efe;
+    border: 1px solid #cfc;
+}
+
+#status-message.testing {
+    color: #666;
+    font-style: italic;
+}
+
+#button-row {
+    text-align: right;
+    margin-top: 8px;
+}
+
+#test-btn {
+    margin-right: 8px;
+}
+
 input[type="submit"] {
-    float: right;
+    float: none;
 }

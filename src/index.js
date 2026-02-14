@@ -3,7 +3,9 @@ import * as child_process from "child_process";
 import fixPath from 'fix-path';
 import { app, Tray, Menu, nativeImage, ipcMain } from 'electron'
 import { promises as fs } from "fs";
+import { existsSync } from "fs";
 import commandExists from 'command-exists';
+import untildify from 'untildify';
 
 import * as config from './config.js';
 import * as window from './window.js';
@@ -39,6 +41,30 @@ async function main() {
     ipcMain.on('edit', (event, data) => {
         config.deleteTarget(data.initialName);
         config.addTarget(data.target.name, data.target.url, data.target.mount, data.target.authType, data.target.password, data.target.port, data.target.identityFile);
+    });
+    ipcMain.handle('validate', (event, data) => {
+        const errors = [];
+        if (data.port) {
+            const p = parseInt(data.port, 10);
+            if (isNaN(p) || p < 1 || p > 65535 || String(p) !== data.port) {
+                errors.push('Port must be a number between 1 and 65535');
+            }
+        }
+        if (data.identityFile) {
+            const resolved = untildify(data.identityFile);
+            if (!existsSync(resolved)) {
+                errors.push('Identity file not found: ' + data.identityFile);
+            }
+        }
+        return errors.length ? { valid: false, errors } : { valid: true };
+    });
+    ipcMain.handle('test-connection', async (event, data) => {
+        try {
+            await config.testSSHConnection(data.url, data.port, data.identityFile, data.authType, data.password);
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
     });
     app.on('window-all-closed', () => {
         updateTray(tray);
@@ -115,7 +141,7 @@ async function updateTray(tray) {
                     label: 'Edit',
                     enabled: !await target.status(),
                     click: async () => {
-                        await window.create('src/renderer/edit.html', 360, 300, target);
+                        await window.create('src/renderer/edit.html', 360, 360, target);
                     },
                 },
                 {
@@ -134,7 +160,7 @@ async function updateTray(tray) {
         {
             label: 'Add',
             click: async () => {
-                await window.create('src/renderer/add.html', 360, 300);
+                await window.create('src/renderer/add.html', 360, 360);
             },
         },
         { label: 'Quit', click: app.quit },
