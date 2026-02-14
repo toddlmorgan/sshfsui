@@ -4,12 +4,21 @@ const passwordRow = document.querySelector('#password-row');
 const passwordInput = form.querySelector('input[name="password"]');
 const statusMessage = document.querySelector('#status-message');
 const testBtn = document.querySelector('#test-btn');
+const mountInput = form.querySelector('input[name="mount"]');
+
+let mountRoot = '~/sshfs_mounts';
+let mountManuallyEdited = false;
 
 window.electronAPI.onLoad((event, defaults) => {
-    if (defaults.mountroot) form.querySelector('input[name="mount"]').value = defaults.mountroot;
+    if (defaults.mountroot) mountRoot = defaults.mountroot;
+    if (defaults.mountroot) mountInput.value = defaults.mountroot;
     if (defaults.identity) form.querySelector('input[name="identityFile"]').value = defaults.identity;
     if (defaults.sshoptions) form.querySelector('input[name="sshOptions"]').value = defaults.sshoptions;
     if (defaults.port) form.querySelector('input[name="port"]').value = defaults.port;
+});
+
+mountInput.addEventListener('input', () => {
+    mountManuallyEdited = true;
 });
 
 authSelect.addEventListener('change', () => {
@@ -46,6 +55,72 @@ function validatePort(port) {
     const p = parseInt(port, 10);
     return !isNaN(p) && p >= 1 && p <= 65535 && String(p) === port;
 }
+
+function generateMountPath(url) {
+    const colonIdx = url.indexOf(':');
+    const userHost = colonIdx !== -1 ? url.substring(0, colonIdx) : url;
+    const remotePath = colonIdx !== -1 ? url.substring(colonIdx + 1) : '';
+    const pathParts = remotePath.split('/').filter(Boolean);
+    const lastPart = pathParts.length > 0 ? pathParts[pathParts.length - 1] : '';
+    const dirName = lastPart ? `${userHost}_${lastPart}` : userHost;
+    const safeName = dirName.replace(/[\/\\:*?"<>|]/g, '_');
+    return mountRoot + '/' + safeName;
+}
+
+function updateMountFromURL() {
+    if (mountManuallyEdited) return;
+    const url = urlInput.value.trim();
+    if (url && url.includes('@')) {
+        mountInput.value = generateMountPath(url);
+    }
+}
+
+function parseSSHString(input) {
+    const trimmed = input.trim();
+    const withoutSSH = trimmed.replace(/^(ssh|scp)\s+/, '');
+
+    const result = { host: '', port: '', identityFile: '', options: [] };
+    const tokens = withoutSSH.split(/\s+/);
+
+    let i = 0;
+    while (i < tokens.length) {
+        if (tokens[i] === '-p' && tokens[i+1]) {
+            result.port = tokens[++i];
+        } else if (tokens[i] === '-i' && tokens[i+1]) {
+            result.identityFile = tokens[++i];
+        } else if (tokens[i] === '-o' && tokens[i+1]) {
+            result.options.push('-o', tokens[++i]);
+            i++;
+            continue;
+        } else if (tokens[i].includes('@') && !result.host) {
+            result.host = tokens[i];
+        }
+        i++;
+    }
+    return result.host ? result : null;
+}
+
+const urlInput = form.querySelector('input[name="url"]');
+urlInput.addEventListener('input', updateMountFromURL);
+urlInput.addEventListener('paste', () => {
+    setTimeout(() => {
+        const val = urlInput.value;
+        if (val.startsWith('ssh ') || val.startsWith('scp ') ||
+            (val.includes('@') && (val.includes(' -p ') || val.includes(' -i ')))) {
+            const parsed = parseSSHString(val);
+            if (parsed) {
+                urlInput.value = parsed.host;
+                if (parsed.port) form.querySelector('input[name="port"]').value = parsed.port;
+                if (parsed.identityFile) form.querySelector('input[name="identityFile"]').value = parsed.identityFile;
+                if (parsed.options.length) {
+                    form.querySelector('input[name="sshOptions"]').value = parsed.options.join(' ');
+                }
+                showStatus('Parsed SSH command — fields auto-filled', 'success');
+            }
+        }
+        updateMountFromURL();
+    }, 0);
+});
 
 form.addEventListener('submit', async function sendAddDataAndCloseWindow(event) {
     event.preventDefault();

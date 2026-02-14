@@ -14,10 +14,12 @@
         <input required type="text" name="name">
 
         <label for="url">Target URL:</label>
-        <input required type="text" name="url">
+        <input required type="text" name="url" placeholder="user@host:/remote/path" id="url-input">
+        <div class="help-text" id="url-help">Tip: Paste an SSH command (e.g. <code>ssh user@host -p 3333</code>) to auto-fill fields</div>
 
         <label for="mount">Mount Path:</label>
         <input required type="text" name="mount">
+        <div class="help-text">Local directory where remote files will appear</div>
 
         <label for="port">Port:</label>
         <input type="text" name="port" placeholder="22 (default)">

@@ -21,6 +21,12 @@ const errorHTMLTimeout = await fs.readFile(appPath + '/src/partials/error-timeou
 const icon = nativeImage.createFromPath(appPath + '/assets/tray.png');
 const iconDisconnected = nativeImage.createFromPath(appPath + '/assets/disconnected.png');
 const iconConnected = nativeImage.createFromPath(appPath + '/assets/connected.png');
+const iconConnecting = nativeImage.createFromPath(appPath + '/assets/connecting.png');
+
+// In-memory connection state: target.name → 'connecting' | 'connected' | 'disconnected'
+const connectionStates = new Map();
+// Item counts after mount: target.name → number
+const mountItemCounts = new Map();
 
 app.whenReady().then(main);
 
@@ -39,13 +45,19 @@ async function main() {
     const targets = config.fetchOrCreateEmptyConfig();
     for (const target of targets) {
         if (target.autoconnect) {
-            try {
-                const connected = await target.status();
-                if (!connected) {
+            const connected = await target.status();
+            if (!connected) {
+                connectionStates.set(target.name, 'connecting');
+                await updateTray(tray);
+                try {
                     await target.connect();
+                    connectionStates.set(target.name, 'connected');
+                    const count = await waitForMountContent(target.mount);
+                    if (count > 0) mountItemCounts.set(target.name, count);
+                } catch (e) {
+                    connectionStates.set(target.name, 'disconnected');
+                    console.error(`Auto-connect failed for ${target.name}:`, e.message);
                 }
-            } catch (e) {
-                console.error(`Auto-connect failed for ${target.name}:`, e.message);
             }
         }
     }
@@ -122,26 +134,60 @@ async function updateTray(tray) {
     ];
 
     for (const target of targets) {
+        const state = connectionStates.get(target.name);
+        const isConnecting = state === 'connecting';
+        const connected = isConnecting ? false : await target.status();
+
+        // Determine status icon
+        let statusIcon;
+        if (isConnecting) {
+            statusIcon = iconConnecting;
+        } else if (connected) {
+            statusIcon = iconConnected;
+        } else {
+            statusIcon = iconDisconnected;
+        }
+
+        // Build status label
+        let statusLabel = 'Status';
+        if (isConnecting) {
+            statusLabel = 'Connecting...';
+        } else if (connected) {
+            const count = mountItemCounts.get(target.name);
+            statusLabel = count ? `Connected (${count} items)` : 'Connected';
+        } else {
+            statusLabel = 'Disconnected';
+        }
+        if (target.autoconnect) statusLabel += ' (auto)';
+
         items.push({
             label: target.name,
             submenu: [
                 {
-                    icon: await target.status() ? iconConnected : iconDisconnected,
-                    label: 'Status' + (target.autoconnect ? ' (auto)' : ''),
+                    icon: statusIcon,
+                    label: statusLabel,
                     enabled: false,
                 },
                 {
-                    label: await target.status() ? 'Disconnect' : 'Connect',
+                    label: isConnecting ? 'Connecting...' : (connected ? 'Disconnect' : 'Connect'),
+                    enabled: !isConnecting,
                     click: async () => {
-                        const connected = await target.status();
-                        if (connected) {
+                        const currentlyConnected = await target.status();
+                        if (currentlyConnected) {
                             await target.disconnect();
+                            connectionStates.set(target.name, 'disconnected');
+                            mountItemCounts.delete(target.name);
                         } else {
+                            connectionStates.set(target.name, 'connecting');
+                            await updateTray(tray);
                             try {
                                 await target.connect();
+                                connectionStates.set(target.name, 'connected');
+                                const count = await waitForMountContent(target.mount);
+                                if (count > 0) mountItemCounts.set(target.name, count);
                             } catch (e) {
+                                connectionStates.set(target.name, 'disconnected');
                                 await window.create('src/renderer/error.html', 320, 120, e.message);
-                                return;
                             }
                         }
                         updateTray(tray);
@@ -149,13 +195,14 @@ async function updateTray(tray) {
                 },
                 {
                     label: 'Open Folder',
+                    enabled: !isConnecting,
                     click: () => {
                         child_process.execSync('open ' + target.mount);
                     },
                 },
                 {
                     label: 'Edit',
-                    enabled: !await target.status(),
+                    enabled: !connected && !isConnecting,
                     click: async () => {
                         await window.create('src/renderer/edit.html', 360, 430, target);
                     },
@@ -164,6 +211,8 @@ async function updateTray(tray) {
                     label: 'Delete',
                     click: async () => {
                         config.deleteTarget(target.name);
+                        connectionStates.delete(target.name);
+                        mountItemCounts.delete(target.name);
                         await updateTray(tray);
                     },
                 },
@@ -183,4 +232,21 @@ async function updateTray(tray) {
     ])
     const contextMenu = Menu.buildFromTemplate(items);
     tray.setContextMenu(contextMenu);
+}
+
+async function waitForMountContent(mountPath, maxWait = 5000, interval = 500) {
+    const absolute = untildify(mountPath);
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+        try {
+            const entries = await fs.readdir(absolute);
+            if (entries.length > 0) return entries.length;
+        } catch { }
+        await new Promise(r => setTimeout(r, interval));
+    }
+    // Final attempt
+    try {
+        const entries = await fs.readdir(absolute);
+        return entries.length;
+    } catch { return 0; }
 }

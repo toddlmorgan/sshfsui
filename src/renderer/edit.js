@@ -63,6 +63,51 @@ function validatePort(port) {
     return !isNaN(p) && p >= 1 && p <= 65535 && String(p) === port;
 }
 
+function parseSSHString(input) {
+    const trimmed = input.trim();
+    const withoutSSH = trimmed.replace(/^(ssh|scp)\s+/, '');
+
+    const result = { host: '', port: '', identityFile: '', options: [] };
+    const tokens = withoutSSH.split(/\s+/);
+
+    let i = 0;
+    while (i < tokens.length) {
+        if (tokens[i] === '-p' && tokens[i+1]) {
+            result.port = tokens[++i];
+        } else if (tokens[i] === '-i' && tokens[i+1]) {
+            result.identityFile = tokens[++i];
+        } else if (tokens[i] === '-o' && tokens[i+1]) {
+            result.options.push('-o', tokens[++i]);
+            i++;
+            continue;
+        } else if (tokens[i].includes('@') && !result.host) {
+            result.host = tokens[i];
+        }
+        i++;
+    }
+    return result.host ? result : null;
+}
+
+const urlInput = form.querySelector('input[name="url"]');
+urlInput.addEventListener('paste', () => {
+    setTimeout(() => {
+        const val = urlInput.value;
+        if (val.startsWith('ssh ') || val.startsWith('scp ') ||
+            (val.includes('@') && (val.includes(' -p ') || val.includes(' -i ')))) {
+            const parsed = parseSSHString(val);
+            if (parsed) {
+                urlInput.value = parsed.host;
+                if (parsed.port) form.querySelector('input[name="port"]').value = parsed.port;
+                if (parsed.identityFile) form.querySelector('input[name="identityFile"]').value = parsed.identityFile;
+                if (parsed.options.length) {
+                    form.querySelector('input[name="sshOptions"]').value = parsed.options.join(' ');
+                }
+                showStatus('Parsed SSH command — fields auto-filled', 'success');
+            }
+        }
+    }, 0);
+});
+
 form.addEventListener('submit', async function sendEditDataAndCloseWindow(event) {
     event.preventDefault();
     clearStatus();

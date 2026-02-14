@@ -85,3 +85,15 @@ label+select {
 input[type="submit"] {
     float: none;
 }
+
+.help-text {
+    font-size: 10px;
+    color: #888;
+    margin: -4px 10% 6px 34%;
+}
+.help-text code {
+    background: #f0f0f0;
+    padding: 1px 3px;
+    border-radius: 2px;
+    font-size: 10px;
+}

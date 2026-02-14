@@ -123,7 +123,22 @@ class Target {
     }
 
     async disconnect() {
-        await exec(`umount ${this.mount}`);
+        const mountPath = untildify(this.mount);
+        try {
+            await exec(`umount ${mountPath}`);
+        } catch (e) {
+            // On macOS, umount often fails with "Resource busy" for FUSE mounts
+            if (process.platform === 'darwin') {
+                try {
+                    await exec(`diskutil unmount ${mountPath}`);
+                } catch {
+                    // Force unmount as last resort
+                    await exec(`diskutil unmount force ${mountPath}`);
+                }
+            } else {
+                throw e;
+            }
+        }
     }
 }
 
@@ -202,6 +217,24 @@ export function fetchDefaults() {
     return defaults;
 }
 
+
+export function generateMountPath(url, mountRoot) {
+    const root = mountRoot || '~/sshfs_mounts';
+    // Parse user@host:/remote/path
+    const colonIdx = url.indexOf(':');
+    const userHost = colonIdx !== -1 ? url.substring(0, colonIdx) : url;
+    const remotePath = colonIdx !== -1 ? url.substring(colonIdx + 1) : '';
+
+    // Extract last meaningful path component
+    const pathParts = remotePath.split('/').filter(Boolean);
+    const lastPart = pathParts.length > 0 ? pathParts[pathParts.length - 1] : '';
+
+    // Build: mountroot/user@host_lastpart (or just user@host if no path)
+    const dirName = lastPart ? `${userHost}_${lastPart}` : userHost;
+    // Sanitize: replace characters that are problematic in directory names
+    const safeName = dirName.replace(/[\/\\:*?"<>|]/g, '_');
+    return root + '/' + safeName;
+}
 
 export function addTarget(name, url, mount, authType = 'key', password = null, port = '', identityFile = '', sshOptions = '', autoconnect = false) {
     const targetBase = configDir + '/' + name;
