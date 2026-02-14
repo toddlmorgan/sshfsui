@@ -14,13 +14,14 @@ const configDir = os.homedir() + '/.sshfsui'
 
 
 class Target {
-    constructor(name, url, mount, authType = 'key', port = '', identityFile = '') {
+    constructor(name, url, mount, authType = 'key', port = '', identityFile = '', sshOptions = '') {
         this.name = name;
         this.url = url;
         this.mount = mount;
         this.authType = authType;
         this.port = port;
         this.identityFile = identityFile;
+        this.sshOptions = sshOptions;
     }
 
     _sshOpts() {
@@ -33,6 +34,11 @@ class Target {
         if (this.identityFile) {
             sshFlags.push('-i', this.identityFile);
             sshfsFlags.push('-o', `IdentityFile=${this.identityFile}`);
+        }
+        if (this.sshOptions) {
+            const tokens = this.sshOptions.split(/\s+/).filter(Boolean);
+            sshFlags.push(...tokens);
+            sshfsFlags.push(...tokens);
         }
         return { sshFlags, sshfsFlags };
     }
@@ -157,7 +163,13 @@ function fetchConfig() {
         } catch {
             // Default to empty (use SSH default key search)
         }
-        const t = new Target(name, targetURL, targetMount, authType, port, identityFile)
+        let sshOptions = '';
+        try {
+            sshOptions = fs.readFileSync(base + "sshoptions", { encoding: 'utf8' }).trim();
+        } catch {
+            // Default to empty (no extra SSH options)
+        }
+        const t = new Target(name, targetURL, targetMount, authType, port, identityFile, sshOptions)
         config.push(t);
     }
     return config;
@@ -168,7 +180,7 @@ function createEmptyConfig() {
 }
 
 
-export function addTarget(name, url, mount, authType = 'key', password = null, port = '', identityFile = '') {
+export function addTarget(name, url, mount, authType = 'key', password = null, port = '', identityFile = '', sshOptions = '') {
     const targetBase = configDir + '/' + name;
     fs.mkdirSync(targetBase);
     fs.writeFileSync(targetBase + "/target", url, { encoding: 'utf8' });
@@ -183,6 +195,9 @@ export function addTarget(name, url, mount, authType = 'key', password = null, p
     }
     if (identityFile) {
         fs.writeFileSync(targetBase + "/identity", identityFile, { encoding: 'utf8' });
+    }
+    if (sshOptions) {
+        fs.writeFileSync(targetBase + "/sshoptions", sshOptions, { encoding: 'utf8' });
     }
 
     const absolutePath = untildify(mount);
@@ -204,7 +219,7 @@ export function addTarget(name, url, mount, authType = 'key', password = null, p
 }
 
 
-export async function testSSHConnection(url, port, identityFile, authType, password) {
+export async function testSSHConnection(url, port, identityFile, authType, password, sshOptions = '') {
     const parts = url.split(':');
     const host = parts[0];
     const sshFlags = [];
@@ -213,6 +228,10 @@ export async function testSSHConnection(url, port, identityFile, authType, passw
     }
     if (identityFile) {
         sshFlags.push('-i', identityFile);
+    }
+    if (sshOptions) {
+        const tokens = sshOptions.split(/\s+/).filter(Boolean);
+        sshFlags.push(...tokens);
     }
     const flagStr = sshFlags.length ? sshFlags.join(' ') + ' ' : '';
     if (authType === 'password' && password) {

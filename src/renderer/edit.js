@@ -16,6 +16,7 @@ function setInitialData(event, data) {
     form.querySelector('input[name="mount"]').value = data.mount;
     form.querySelector('input[name="port"]').value = data.port || '';
     form.querySelector('input[name="identityFile"]').value = data.identityFile || '';
+    form.querySelector('input[name="sshOptions"]').value = data.sshOptions || '';
     if (data.authType) {
         authSelect.value = data.authType;
     }
@@ -37,6 +38,7 @@ function getFormData() {
         mount: form.querySelector('input[name="mount"]').value,
         port: form.querySelector('input[name="port"]').value || '',
         identityFile: form.querySelector('input[name="identityFile"]').value || '',
+        sshOptions: form.querySelector('input[name="sshOptions"]').value || '',
         authType: authSelect.value,
         password: passwordInput.value || null,
     };

@@ -36,11 +36,11 @@ async function main() {
     await updateTray(tray);
 
     ipcMain.on('add', (event, data) => {
-        config.addTarget(data.name, data.url, data.mount, data.authType, data.password, data.port, data.identityFile);
+        config.addTarget(data.name, data.url, data.mount, data.authType, data.password, data.port, data.identityFile, data.sshOptions);
     });
     ipcMain.on('edit', (event, data) => {
         config.deleteTarget(data.initialName);
-        config.addTarget(data.target.name, data.target.url, data.target.mount, data.target.authType, data.target.password, data.target.port, data.target.identityFile);
+        config.addTarget(data.target.name, data.target.url, data.target.mount, data.target.authType, data.target.password, data.target.port, data.target.identityFile, data.target.sshOptions);
     });
     ipcMain.handle('validate', (event, data) => {
         const errors = [];
@@ -60,7 +60,7 @@ async function main() {
     });
     ipcMain.handle('test-connection', async (event, data) => {
         try {
-            await config.testSSHConnection(data.url, data.port, data.identityFile, data.authType, data.password);
+            await config.testSSHConnection(data.url, data.port, data.identityFile, data.authType, data.password, data.sshOptions);
             return { success: true };
         } catch (e) {
             return { success: false, error: e.message };
@@ -141,7 +141,7 @@ async function updateTray(tray) {
                     label: 'Edit',
                     enabled: !await target.status(),
                     click: async () => {
-                        await window.create('src/renderer/edit.html', 360, 360, target);
+                        await window.create('src/renderer/edit.html', 360, 400, target);
                     },
                 },
                 {
@@ -160,7 +160,7 @@ async function updateTray(tray) {
         {
             label: 'Add',
             click: async () => {
-                await window.create('src/renderer/add.html', 360, 360);
+                await window.create('src/renderer/add.html', 360, 400);
             },
         },
         { label: 'Quit', click: app.quit },
