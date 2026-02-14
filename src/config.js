@@ -11,10 +11,11 @@ import { safeStorage } from "electron";
 const exec = util.promisify(child_process.exec)
 
 const configDir = os.homedir() + '/.sshfsui'
+const SSH_TIMEOUT = 15
 
 
 class Target {
-    constructor(name, url, mount, authType = 'key', port = '', identityFile = '', sshOptions = '') {
+    constructor(name, url, mount, authType = 'key', port = '', identityFile = '', sshOptions = '', autoconnect = false) {
         this.name = name;
         this.url = url;
         this.mount = mount;
@@ -22,6 +23,7 @@ class Target {
         this.port = port;
         this.identityFile = identityFile;
         this.sshOptions = sshOptions;
+        this.autoconnect = autoconnect;
     }
 
     _sshOpts() {
@@ -57,7 +59,7 @@ class Target {
         try {
             if (this.authType === 'password') {
                 const password = this._decryptPassword();
-                const args = ['3', 'sshfs', ...sshfsFlags, '-o', 'password_stdin', this.url, this.mount];
+                const args = [String(SSH_TIMEOUT), 'sshfs', ...sshfsFlags, '-o', 'password_stdin', this.url, this.mount];
                 await new Promise((resolve, reject) => {
                     const proc = child_process.spawn('timeout', args, {
                         stdio: ['pipe', 'pipe', 'pipe']
@@ -73,7 +75,7 @@ class Target {
                 });
             } else {
                 const flagStr = sshfsFlags.length ? sshfsFlags.join(' ') + ' ' : '';
-                await exec(`timeout 3 sshfs ${flagStr}${this.url} ${this.mount}`);
+                await exec(`timeout ${SSH_TIMEOUT} sshfs ${flagStr}${this.url} ${this.mount}`);
             }
         } catch (e) {
             try {
@@ -93,11 +95,11 @@ class Target {
         const flagStr = sshFlags.length ? sshFlags.join(' ') + ' ' : '';
         if (this.authType === 'password') {
             const password = this._decryptPassword();
-            await exec(`sshpass -e timeout 3 ssh ${flagStr}${host} echo ping`, {
+            await exec(`sshpass -e timeout ${SSH_TIMEOUT} ssh ${flagStr}${host} echo ping`, {
                 env: { ...process.env, SSHPASS: password }
             });
         } else {
-            await exec(`timeout 3 ssh ${flagStr}${host} echo ping`);
+            await exec(`timeout ${SSH_TIMEOUT} ssh ${flagStr}${host} echo ping`);
         }
     }
 
@@ -140,6 +142,7 @@ function fetchConfig() {
     const config = [];
     const targetNames = fs.readdirSync(configDir, { withFileTypes: true })
         .filter(item => item.isDirectory())
+        .filter(item => !item.name.startsWith('.'))
         .map(item => item.name);
     for (const name of targetNames) {
         const base = configDir + '/' + name + '/';
@@ -169,7 +172,13 @@ function fetchConfig() {
         } catch {
             // Default to empty (no extra SSH options)
         }
-        const t = new Target(name, targetURL, targetMount, authType, port, identityFile, sshOptions)
+        let autoconnect = false;
+        try {
+            autoconnect = fs.readFileSync(base + "autoconnect", { encoding: 'utf8' }).trim() === 'true';
+        } catch {
+            // Default to false (no auto-connect)
+        }
+        const t = new Target(name, targetURL, targetMount, authType, port, identityFile, sshOptions, autoconnect)
         config.push(t);
     }
     return config;
@@ -180,7 +189,21 @@ function createEmptyConfig() {
 }
 
 
-export function addTarget(name, url, mount, authType = 'key', password = null, port = '', identityFile = '', sshOptions = '') {
+export function fetchDefaults() {
+    const defaultsDir = configDir + '/.defaults';
+    const defaults = { mountroot: '', identity: '', sshoptions: '', port: '' };
+    for (const key of Object.keys(defaults)) {
+        try {
+            defaults[key] = fs.readFileSync(defaultsDir + '/' + key, { encoding: 'utf8' }).trim();
+        } catch {
+            // Missing file — keep empty default
+        }
+    }
+    return defaults;
+}
+
+
+export function addTarget(name, url, mount, authType = 'key', password = null, port = '', identityFile = '', sshOptions = '', autoconnect = false) {
     const targetBase = configDir + '/' + name;
     fs.mkdirSync(targetBase);
     fs.writeFileSync(targetBase + "/target", url, { encoding: 'utf8' });
@@ -199,6 +222,7 @@ export function addTarget(name, url, mount, authType = 'key', password = null, p
     if (sshOptions) {
         fs.writeFileSync(targetBase + "/sshoptions", sshOptions, { encoding: 'utf8' });
     }
+    fs.writeFileSync(targetBase + "/autoconnect", autoconnect ? 'true' : 'false', { encoding: 'utf8' });
 
     const absolutePath = untildify(mount);
     if (!fs.existsSync(absolutePath)) {
@@ -235,11 +259,11 @@ export async function testSSHConnection(url, port, identityFile, authType, passw
     }
     const flagStr = sshFlags.length ? sshFlags.join(' ') + ' ' : '';
     if (authType === 'password' && password) {
-        await exec(`sshpass -e timeout 5 ssh ${flagStr}${host} echo ping`, {
+        await exec(`sshpass -e timeout ${SSH_TIMEOUT} ssh ${flagStr}${host} echo ping`, {
             env: { ...process.env, SSHPASS: password }
         });
     } else {
-        await exec(`timeout 5 ssh ${flagStr}${host} echo ping`);
+        await exec(`timeout ${SSH_TIMEOUT} ssh ${flagStr}${host} echo ping`);
     }
 }
 

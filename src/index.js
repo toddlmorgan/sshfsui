@@ -35,12 +35,28 @@ async function main() {
     const tray = new Tray(icon);
     await updateTray(tray);
 
+    // Auto-connect targets with autoconnect enabled
+    const targets = config.fetchOrCreateEmptyConfig();
+    for (const target of targets) {
+        if (target.autoconnect) {
+            try {
+                const connected = await target.status();
+                if (!connected) {
+                    await target.connect();
+                }
+            } catch (e) {
+                console.error(`Auto-connect failed for ${target.name}:`, e.message);
+            }
+        }
+    }
+    await updateTray(tray);
+
     ipcMain.on('add', (event, data) => {
-        config.addTarget(data.name, data.url, data.mount, data.authType, data.password, data.port, data.identityFile, data.sshOptions);
+        config.addTarget(data.name, data.url, data.mount, data.authType, data.password, data.port, data.identityFile, data.sshOptions, data.autoconnect || false);
     });
     ipcMain.on('edit', (event, data) => {
         config.deleteTarget(data.initialName);
-        config.addTarget(data.target.name, data.target.url, data.target.mount, data.target.authType, data.target.password, data.target.port, data.target.identityFile, data.target.sshOptions);
+        config.addTarget(data.target.name, data.target.url, data.target.mount, data.target.authType, data.target.password, data.target.port, data.target.identityFile, data.target.sshOptions, data.target.autoconnect || false);
     });
     ipcMain.handle('validate', (event, data) => {
         const errors = [];
@@ -111,7 +127,7 @@ async function updateTray(tray) {
             submenu: [
                 {
                     icon: await target.status() ? iconConnected : iconDisconnected,
-                    label: 'Status',
+                    label: 'Status' + (target.autoconnect ? ' (auto)' : ''),
                     enabled: false,
                 },
                 {
@@ -141,7 +157,7 @@ async function updateTray(tray) {
                     label: 'Edit',
                     enabled: !await target.status(),
                     click: async () => {
-                        await window.create('src/renderer/edit.html', 360, 400, target);
+                        await window.create('src/renderer/edit.html', 360, 430, target);
                     },
                 },
                 {
@@ -160,7 +176,7 @@ async function updateTray(tray) {
         {
             label: 'Add',
             click: async () => {
-                await window.create('src/renderer/add.html', 360, 400);
+                await window.create('src/renderer/add.html', 360, 400, config.fetchDefaults());
             },
         },
         { label: 'Quit', click: app.quit },

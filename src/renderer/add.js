@@ -5,6 +5,13 @@ const passwordInput = form.querySelector('input[name="password"]');
 const statusMessage = document.querySelector('#status-message');
 const testBtn = document.querySelector('#test-btn');
 
+window.electronAPI.onLoad((event, defaults) => {
+    if (defaults.mountroot) form.querySelector('input[name="mount"]').value = defaults.mountroot;
+    if (defaults.identity) form.querySelector('input[name="identityFile"]').value = defaults.identity;
+    if (defaults.sshoptions) form.querySelector('input[name="sshOptions"]').value = defaults.sshoptions;
+    if (defaults.port) form.querySelector('input[name="port"]').value = defaults.port;
+});
+
 authSelect.addEventListener('change', () => {
     const isPassword = authSelect.value === 'password';
     passwordRow.style.display = isPassword ? '' : 'none';

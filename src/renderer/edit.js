@@ -2,6 +2,7 @@ const form = document.querySelector("#edit");
 const authSelect = form.querySelector('select[name="authType"]');
 const passwordRow = document.querySelector('#password-row');
 const passwordInput = form.querySelector('input[name="password"]');
+const autoconnectCheckbox = form.querySelector('input[name="autoconnect"]');
 const statusMessage = document.querySelector('#status-message');
 const testBtn = document.querySelector('#test-btn');
 
@@ -23,6 +24,7 @@ function setInitialData(event, data) {
     const isPassword = authSelect.value === 'password';
     passwordRow.style.display = isPassword ? '' : 'none';
     passwordInput.required = isPassword;
+    autoconnectCheckbox.checked = data.autoconnect || false;
 }
 
 authSelect.addEventListener('change', () => {
@@ -41,6 +43,7 @@ function getFormData() {
         sshOptions: form.querySelector('input[name="sshOptions"]').value || '',
         authType: authSelect.value,
         password: passwordInput.value || null,
+        autoconnect: autoconnectCheckbox.checked,
     };
 }
 

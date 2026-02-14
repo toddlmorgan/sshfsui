@@ -35,6 +35,16 @@ label+select {
     margin: 0 10% 2% 4%;
 }
 
+#autoconnect-row label {
+    width: 30%;
+    text-align: right;
+}
+
+#autoconnect-row input[type="checkbox"] {
+    width: auto;
+    margin: 0 10% 2% 4%;
+}
+
 #status-message {
     margin: 8px 0;
     padding: 6px 10px;
