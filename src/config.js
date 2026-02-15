@@ -390,6 +390,7 @@ class Target {
         try {
             await exec(`umount "${mountPath}"`);
             log('INFO', `[${this.name}] Disconnected via umount`);
+            this._removeEmptyMountDir();
             return;
         } catch {}
 
@@ -397,11 +398,13 @@ class Target {
             try {
                 await exec(`diskutil unmount "${mountPath}"`);
                 log('INFO', `[${this.name}] Disconnected via diskutil unmount`);
+                this._removeEmptyMountDir();
                 return;
             } catch {}
             try {
                 await exec(`diskutil unmount force "${mountPath}"`);
                 log('INFO', `[${this.name}] Disconnected via diskutil unmount force`);
+                this._removeEmptyMountDir();
                 return;
             } catch {}
         }
@@ -409,6 +412,25 @@ class Target {
         // All standard methods failed — try full force cleanup (kill process + umount -f)
         log('WARN', `[${this.name}] Standard unmount failed, attempting force cleanup`);
         await this.forceCleanup();
+        this._removeEmptyMountDir();
+    }
+
+    _removeEmptyMountDir() {
+        const mountPath = this._absoluteMount();
+        try {
+            if (!fs.existsSync(mountPath)) return;
+            const stat = fs.statSync(mountPath);
+            if (!stat.isDirectory()) return;
+            const entries = fs.readdirSync(mountPath);
+            if (entries.length > 0) {
+                log('INFO', `[${this.name}] Mount directory ${mountPath} not empty (${entries.length} items), keeping`);
+                return;
+            }
+            fs.rmdirSync(mountPath);
+            log('INFO', `[${this.name}] Removed empty mount directory ${mountPath}`);
+        } catch (e) {
+            log('WARN', `[${this.name}] Could not remove mount directory ${mountPath}: ${e.message}`);
+        }
     }
 }
 
@@ -693,7 +715,30 @@ export function deleteTarget(name) {
     } catch {
         return;
     }
+    // Find the target before removing so we can clean up its mount directory
+    const target = data.targets.find(t => t.name === name);
     data.targets = data.targets.filter(t => t.name !== name);
     writeConfig(data);
     log('INFO', `Target deleted: ${name}`);
+
+    // Safely remove empty mount directory
+    if (target && target.mount) {
+        const mountPath = untildify(target.mount.trim());
+        try {
+            if (fs.existsSync(mountPath)) {
+                const stat = fs.statSync(mountPath);
+                if (stat.isDirectory()) {
+                    const entries = fs.readdirSync(mountPath);
+                    if (entries.length === 0) {
+                        fs.rmdirSync(mountPath);
+                        log('INFO', `Removed empty mount directory ${mountPath}`);
+                    } else {
+                        log('INFO', `Mount directory ${mountPath} not empty (${entries.length} items), keeping`);
+                    }
+                }
+            }
+        } catch (e) {
+            log('WARN', `Could not remove mount directory ${mountPath}: ${e.message}`);
+        }
+    }
 }
