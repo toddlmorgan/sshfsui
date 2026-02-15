@@ -21,11 +21,15 @@ export async function create(file, width, height, loadData) {
     win.removeMenu();
     win.webContents.setWindowOpenHandler(openExternalAndDeny);
 
-    electron.ipcMain.on('resize-to-content', (event, contentHeight) => {
+    const resizeHandler = (event, contentHeight) => {
         if (event.sender === win.webContents) {
             const [currentWidth] = win.getContentSize();
             win.setContentSize(currentWidth, Math.ceil(contentHeight));
         }
+    };
+    electron.ipcMain.on('resize-to-content', resizeHandler);
+    win.on('closed', () => {
+        electron.ipcMain.removeListener('resize-to-content', resizeHandler);
     });
 
     await win.loadFile(file);
