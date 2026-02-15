@@ -2,13 +2,35 @@ import os from "os";
 import fs from "fs";
 import util from "util";
 import * as child_process from "child_process";
-import path from "path";
 import untildify from "untildify";
 import * as sudo from "sudo-prompt";
 import { kill } from "process";
 import { safeStorage } from "electron";
 
 const exec = util.promisify(child_process.exec)
+
+function spawnPromise(cmd, args, options = {}) {
+    return new Promise((resolve, reject) => {
+        const proc = child_process.spawn(cmd, args, {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            ...options
+        });
+        let stdout = '';
+        let stderr = '';
+        proc.stdout.on('data', (data) => { stdout += data; });
+        proc.stderr.on('data', (data) => { stderr += data; });
+        proc.on('close', (code) => {
+            if (code === 0) {
+                resolve({ stdout, stderr });
+            } else {
+                reject(new Error(stderr || `${cmd} exited with code ${code}`));
+            }
+        });
+        proc.on('error', (err) => {
+            reject(err);
+        });
+    });
+}
 
 const configDir = os.homedir() + '/.sshfsui'
 const configPath = configDir + '/config.json'
@@ -51,7 +73,7 @@ export function readLogTail(lines = 100) {
 }
 
 
-class Target {
+export class Target {
     constructor(name, url, mount, authType = 'key', port = '', identityFile = '', sshOptions = '', autoconnect = false, credential = null) {
         this.name = (name || '').trim();
         this.url = (url || '').trim();
@@ -191,14 +213,10 @@ class Target {
                     });
                 });
             } else {
-                const flagStr = sshfsFlags.length ? sshfsFlags.join(' ') + ' ' : '';
-                const cmd = `timeout ${SSH_TIMEOUT} sshfs ${flagStr}${sshfsUrl} "${absoluteMount}"`;
-                log('INFO', `[${this.name}] Running: ${cmd}`);
-                const result = await exec(cmd);
+                const args = [String(SSH_TIMEOUT), 'sshfs', ...sshfsFlags, sshfsUrl, absoluteMount];
+                log('INFO', `[${this.name}] Running: timeout ${args.join(' ')}`);
+                await spawnPromise('timeout', args);
                 log('INFO', `[${this.name}] sshfs process completed`);
-                if (result.stderr && result.stderr.trim()) {
-                    log('WARN', `[${this.name}] sshfs stderr: ${result.stderr.trim()}`);
-                }
             }
         } catch (e) {
             log('ERROR', `[${this.name}] sshfs command failed: ${e.message}`);
@@ -303,15 +321,18 @@ class Target {
         const parts = this.url.split(':');
         const host = parts[0];
         const { sshFlags } = this._sshOpts();
-        const flagStr = sshFlags.length ? sshFlags.join(' ') + ' ' : '';
         log('INFO', `[${this.name}] Testing SSH to ${host}...`);
         if (this.authType === 'password') {
             const password = this._decryptPassword();
-            await exec(`sshpass -e timeout ${SSH_TIMEOUT} ssh ${flagStr}${host} echo ping`, {
+            const args = [String(SSH_TIMEOUT), 'ssh', ...sshFlags, host, 'echo', 'ping'];
+            log('INFO', `[${this.name}] Running: sshpass -e timeout ${args.join(' ')}`);
+            await spawnPromise('sshpass', ['-e', 'timeout', ...args], {
                 env: { ...process.env, SSHPASS: password }
             });
         } else {
-            await exec(`timeout ${SSH_TIMEOUT} ssh ${flagStr}${host} echo ping`);
+            const args = [String(SSH_TIMEOUT), 'ssh', ...sshFlags, host, 'echo', 'ping'];
+            log('INFO', `[${this.name}] Running: timeout ${args.join(' ')}`);
+            await spawnPromise('timeout', args);
         }
     }
 
@@ -441,7 +462,7 @@ class Target {
 
 // Find a mount table line where the mount point exactly matches the given path
 // Mount lines look like: "source on /mount/path (type, options...)"
-function findMountLine(mountOutput, absoluteMountPath) {
+export function findMountLine(mountOutput, absoluteMountPath) {
     const lines = mountOutput.split('\n');
     return lines.find(l => {
         const onIdx = l.indexOf(' on ');
@@ -454,7 +475,7 @@ function findMountLine(mountOutput, absoluteMountPath) {
 }
 
 // Parse df -k output into { filesystem, totalKB, usedKB, availKB }
-function parseDfOutput(dfOutput) {
+export function parseDfOutput(dfOutput) {
     const lines = dfOutput.trim().split('\n');
     if (lines.length < 2) return null;
     // df -k output: Filesystem 1024-blocks Used Available Capacity ...
@@ -674,10 +695,10 @@ export function addTarget(name, url, mount, authType = 'key', password = null, p
         } catch (error) {
             // This is the error code for permissions error.
             if (error.errno === -13) {
-                sudo.exec('mkdir ' + absolutePath, { name: 'sshfs' }, (e, stdout, stderr) => {
+                sudo.exec(`mkdir "${absolutePath}"`, { name: 'sshfs' }, (e) => {
                     if (!e) {
                         const username = os.userInfo().username
-                        sudo.exec(`chown ${username}:${username} ${absolutePath}`, { name: 'sshfs' }, (e, stdout, stderr) => {});
+                        sudo.exec(`chown ${username}:${username} "${absolutePath}"`, { name: 'sshfs' }, () => {});
                     }
                 });
             }
@@ -701,13 +722,14 @@ export async function testSSHConnection(url, port, identityFile, authType, passw
         const tokens = sshOptions.split(/\s+/).filter(Boolean);
         sshFlags.push(...tokens);
     }
-    const flagStr = sshFlags.length ? sshFlags.join(' ') + ' ' : '';
     if (authType === 'password' && password) {
-        await exec(`sshpass -e timeout ${SSH_TIMEOUT} ssh ${flagStr}${host} echo ping`, {
+        const args = [String(SSH_TIMEOUT), 'ssh', ...sshFlags, host, 'echo', 'ping'];
+        await spawnPromise('sshpass', ['-e', 'timeout', ...args], {
             env: { ...process.env, SSHPASS: password }
         });
     } else {
-        await exec(`timeout ${SSH_TIMEOUT} ssh ${flagStr}${host} echo ping`);
+        const args = [String(SSH_TIMEOUT), 'ssh', ...sshFlags, host, 'echo', 'ping'];
+        await spawnPromise('timeout', args);
     }
 }
 

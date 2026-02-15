@@ -2,6 +2,7 @@ const form = document.querySelector("#add");
 const authSelect = form.querySelector('select[name="authType"]');
 const passwordRow = document.querySelector('#password-row');
 const passwordInput = form.querySelector('input[name="password"]');
+const autoconnectCheckbox = form.querySelector('input[name="autoconnect"]');
 const statusMessage = document.querySelector('#status-message');
 const testBtn = document.querySelector('#test-btn');
 const mountInput = form.querySelector('input[name="mount"]');
@@ -48,6 +49,7 @@ function getFormData() {
         sshOptions: form.querySelector('input[name="sshOptions"]').value || '',
         authType: authSelect.value,
         password: passwordInput.value || null,
+        autoconnect: autoconnectCheckbox.checked,
     };
 }
 
@@ -86,31 +88,6 @@ function updateMountFromURL() {
     if (url && url.includes('@')) {
         mountInput.value = generateMountPath(url);
     }
-}
-
-function parseSSHString(input) {
-    const trimmed = input.trim();
-    const withoutSSH = trimmed.replace(/^(ssh|scp)\s+/, '');
-
-    const result = { host: '', port: '', identityFile: '', options: [] };
-    const tokens = withoutSSH.split(/\s+/);
-
-    let i = 0;
-    while (i < tokens.length) {
-        if (tokens[i] === '-p' && tokens[i+1]) {
-            result.port = tokens[++i];
-        } else if (tokens[i] === '-i' && tokens[i+1]) {
-            result.identityFile = tokens[++i];
-        } else if (tokens[i] === '-o' && tokens[i+1]) {
-            result.options.push('-o', tokens[++i]);
-            i++;
-            continue;
-        } else if (tokens[i].includes('@') && !result.host) {
-            result.host = tokens[i];
-        }
-        i++;
-    }
-    return result.host ? result : null;
 }
 
 const urlInput = form.querySelector('input[name="url"]');

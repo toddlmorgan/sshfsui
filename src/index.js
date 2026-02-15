@@ -69,12 +69,14 @@ async function main() {
     }
     await updateTray(tray);
 
-    ipcMain.on('add', (event, data) => {
+    ipcMain.on('add', async (event, data) => {
         config.addTarget(data.name, data.url, data.mount, data.authType, data.password, data.port, data.identityFile, data.sshOptions, data.autoconnect || false);
+        await updateTray(tray);
     });
-    ipcMain.on('edit', (event, data) => {
+    ipcMain.on('edit', async (event, data) => {
         config.deleteTarget(data.initialName);
         config.addTarget(data.target.name, data.target.url, data.target.mount, data.target.authType, data.target.password, data.target.port, data.target.identityFile, data.target.sshOptions, data.target.autoconnect || false);
+        await updateTray(tray);
     });
     ipcMain.handle('validate', (event, data) => {
         const errors = [];
@@ -192,6 +194,7 @@ async function updateTray(tray) {
                             await window.create('src/renderer/error.html', 480, 160, errMsg);
                         }
                     } else {
+                        if (connectionStates.get(target.name) === 'connecting') return;
                         connectionStates.set(target.name, 'connecting');
                         lastErrors.delete(target.name);
                         await updateTray(tray);

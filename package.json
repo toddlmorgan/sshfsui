@@ -4,7 +4,7 @@
   "version": "0.10.0",
   "scripts": {
     "start": "electron-forge start",
-    "test": "node */**.test.js",
+    "test": "node --import ./src/test-hooks.js src/index.test.js",
     "package": "electron-forge package",
     "make": "electron-forge make"
   },
