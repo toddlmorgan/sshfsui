@@ -53,13 +53,13 @@ export function readLogTail(lines = 100) {
 
 class Target {
     constructor(name, url, mount, authType = 'key', port = '', identityFile = '', sshOptions = '', autoconnect = false, credential = null) {
-        this.name = name;
-        this.url = url;
-        this.mount = mount;
-        this.authType = authType;
-        this.port = port;
-        this.identityFile = identityFile;
-        this.sshOptions = sshOptions;
+        this.name = (name || '').trim();
+        this.url = (url || '').trim();
+        this.mount = (mount || '').trim();
+        this.authType = (authType || 'key').trim();
+        this.port = (port || '').trim();
+        this.identityFile = (identityFile || '').trim();
+        this.sshOptions = (sshOptions || '').trim();
         this.autoconnect = autoconnect;
         this.credential = credential;
     }
@@ -97,34 +97,53 @@ class Target {
     }
 
     async status() {
-        const { stdout } = await exec('mount');
         const absoluteMount = this._absoluteMount();
-        // Check for the absolute mount path in mount output (most reliable)
-        const foundMount = stdout.indexOf(absoluteMount) !== -1;
-        // Also check URL variants
-        const urlMatch = this.url + ' on';
-        const sshfsUrlMatch = this._sshfsUrl() + ' on';
-        const foundURL = stdout.indexOf(urlMatch) !== -1 || stdout.indexOf(sshfsUrlMatch) !== -1;
 
-        if (!foundURL && !foundMount) return false;
+        // Step 1: Parse mount table — look for a line with OUR mount point specifically
+        //   Format: "source on /mount/path (type, options...)"
+        //   Must match " on <absoluteMount> " to avoid false positives from other mounts
+        //   sharing the same URL but different mount paths.
+        const { stdout } = await exec('mount');
+        const lines = stdout.split('\n');
+        const mountLine = lines.find(l => {
+            const onIdx = l.indexOf(' on ');
+            if (onIdx === -1) return false;
+            const afterOn = l.substring(onIdx + 4);
+            // Mount point ends at ' (' for the options section
+            const parenIdx = afterOn.indexOf(' (');
+            const mountPoint = parenIdx !== -1 ? afterOn.substring(0, parenIdx) : afterOn.trim();
+            return mountPoint === absoluteMount;
+        });
 
-        // Mount entry exists in table — probe it to check for stale FUSE mounts.
-        // A dead sshfs daemon leaves a mount entry but any I/O returns EIO or ENOTCONN.
+        if (!mountLine) return false;
+
+        // Step 2: Probe the mount to detect stale FUSE mounts (dead sshfs daemon)
         try {
             fs.readdirSync(absoluteMount);
-            return true;
         } catch (e) {
-            // ENOTCONN (errno -107 Linux, code ENOTCONN) or EIO = stale FUSE mount
-            if (e.code === 'ENOTCONN' || e.code === 'EIO') {
+            if (e.code === 'ENOTCONN' || e.code === 'EIO' || e.code === 'ENXIO') {
                 log('WARN', `[${this.name}] Stale FUSE mount detected at ${absoluteMount} (${e.code}), cleaning up`);
                 try { await this.forceCleanup(); } catch (cleanupErr) {
                     log('ERROR', `[${this.name}] Stale mount cleanup failed: ${cleanupErr.message}`);
                 }
                 return false;
             }
-            // EACCES or other errors — mount may be alive but unreadable, treat as connected
-            return true;
         }
+
+        // Step 3: Use df to verify this is actually a remote filesystem, not the local disk
+        try {
+            const { stdout: dfMount } = await exec(`df -k "${absoluteMount}"`);
+            const { stdout: dfLocal } = await exec(`df -k "${os.homedir()}"`);
+            const mountDf = parseDfOutput(dfMount);
+            const localDf = parseDfOutput(dfLocal);
+            if (mountDf && localDf && mountDf.filesystem === localDf.filesystem) {
+                log('WARN', `[${this.name}] Mount at ${absoluteMount} is on local filesystem (${mountDf.filesystem}), not a remote mount`);
+                try { await this.forceCleanup(); } catch {}
+                return false;
+            }
+        } catch {}
+
+        return true;
     }
 
     async connect() {
@@ -201,8 +220,7 @@ class Target {
         let mountLine = null;
         for (let i = 0; i < MOUNT_VERIFY_RETRIES; i++) {
             const { stdout } = await exec('mount');
-            const lines = stdout.split('\n');
-            mountLine = lines.find(l => l.includes(absoluteMount));
+            mountLine = findMountLine(stdout, absoluteMount);
             if (mountLine) break;
             log('INFO', `[${this.name}] Mount not in table yet, retrying (${i + 1}/${MOUNT_VERIFY_RETRIES})...`);
             await new Promise(r => setTimeout(r, MOUNT_VERIFY_INTERVAL));
@@ -211,7 +229,6 @@ class Target {
         if (!mountLine) {
             const msg = `Mount verification failed: ${absoluteMount} not found in mount table after ${MOUNT_VERIFY_RETRIES} attempts. sshfs may have daemonized but failed to mount.`;
             log('ERROR', `[${this.name}] ${msg}`);
-            // Capture mount table and sshfs processes for diagnostics
             try {
                 const { stdout: mountOut } = await exec('mount');
                 log('ERROR', `[${this.name}] Full mount table:\n${mountOut}`);
@@ -395,6 +412,20 @@ class Target {
     }
 }
 
+
+// Find a mount table line where the mount point exactly matches the given path
+// Mount lines look like: "source on /mount/path (type, options...)"
+function findMountLine(mountOutput, absoluteMountPath) {
+    const lines = mountOutput.split('\n');
+    return lines.find(l => {
+        const onIdx = l.indexOf(' on ');
+        if (onIdx === -1) return false;
+        const afterOn = l.substring(onIdx + 4);
+        const parenIdx = afterOn.indexOf(' (');
+        const mountPoint = parenIdx !== -1 ? afterOn.substring(0, parenIdx) : afterOn.trim();
+        return mountPoint === absoluteMountPath;
+    }) || null;
+}
 
 // Parse df -k output into { filesystem, totalKB, usedKB, availKB }
 function parseDfOutput(dfOutput) {
@@ -583,6 +614,15 @@ export function generateMountPath(url, mountRoot) {
 }
 
 export function addTarget(name, url, mount, authType = 'key', password = null, port = '', identityFile = '', sshOptions = '', autoconnect = false) {
+    // Trim all string inputs to prevent trailing whitespace issues (e.g. sshfs path errors)
+    name = (name || '').trim();
+    url = (url || '').trim();
+    mount = (mount || '').trim();
+    authType = (authType || 'key').trim();
+    port = (port || '').trim();
+    identityFile = (identityFile || '').trim();
+    sshOptions = (sshOptions || '').trim();
+
     ensureConfigDir();
     let data;
     try {
