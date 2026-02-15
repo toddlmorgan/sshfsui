@@ -93,6 +93,10 @@ class Target {
             sshFlags.push(...tokens);
             sshfsFlags.push(...tokens);
         }
+        // Set a meaningful volume name for Finder (macOS)
+        if (process.platform === 'darwin') {
+            sshfsFlags.push('-o', `volname=${this.name}`);
+        }
         return { sshFlags, sshfsFlags };
     }
 
