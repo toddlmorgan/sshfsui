@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self';">
+    <title>Settings</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+
+<body>
+    <form id="settings">
+        <label for="mountroot">Mount Root:</label>
+        <input type="text" name="mountroot" placeholder="~/sshfs_mounts">
+
+        <label for="identity">Identity File:</label>
+        <input type="text" name="identity" placeholder="~/.ssh/id_rsa (default)">
+
+        <label for="port">Default Port:</label>
+        <input type="text" name="port" placeholder="22 (default)">
+
+        <label for="sshoptions">SSH Options:</label>
+        <input type="text" name="sshoptions" placeholder="-o Option=Value">
+
+        <div id="button-row">
+            <input type="submit" value="Save">
+        </div>
+    </form>
+</body>
+
+<script src="settings.js"></script>
+</html>

@@ -11,11 +11,14 @@ import { safeStorage } from "electron";
 const exec = util.promisify(child_process.exec)
 
 const configDir = os.homedir() + '/.sshfsui'
+const configPath = configDir + '/config.json'
 const SSH_TIMEOUT = 15
+
+const DEFAULT_DEFAULTS = { mountroot: '', identity: '', sshoptions: '', port: '' };
 
 
 class Target {
-    constructor(name, url, mount, authType = 'key', port = '', identityFile = '', sshOptions = '', autoconnect = false) {
+    constructor(name, url, mount, authType = 'key', port = '', identityFile = '', sshOptions = '', autoconnect = false, credential = null) {
         this.name = name;
         this.url = url;
         this.mount = mount;
@@ -24,6 +27,19 @@ class Target {
         this.identityFile = identityFile;
         this.sshOptions = sshOptions;
         this.autoconnect = autoconnect;
+        this.credential = credential;
+    }
+
+    _sshfsUrl() {
+        // sshfs requires at least user@host: — append : if missing
+        if (this.url.indexOf(':') === -1) {
+            return this.url + ':';
+        }
+        return this.url;
+    }
+
+    _absoluteMount() {
+        return untildify(this.mount);
     }
 
     _sshOpts() {
@@ -34,8 +50,9 @@ class Target {
             sshfsFlags.push('-p', this.port);
         }
         if (this.identityFile) {
-            sshFlags.push('-i', this.identityFile);
-            sshfsFlags.push('-o', `IdentityFile=${this.identityFile}`);
+            const resolved = untildify(this.identityFile);
+            sshFlags.push('-i', resolved);
+            sshfsFlags.push('-o', `IdentityFile=${resolved}`);
         }
         if (this.sshOptions) {
             const tokens = this.sshOptions.split(/\s+/).filter(Boolean);
@@ -47,19 +64,25 @@ class Target {
 
     async status() {
         const { stdout } = await exec('mount');
+        const absoluteMount = this._absoluteMount();
+        // Check for the absolute mount path in mount output (most reliable)
+        const foundMount = stdout.indexOf(absoluteMount) !== -1;
+        // Also check URL variants
         const urlMatch = this.url + ' on';
-        const foundURL = stdout.indexOf(urlMatch) !== -1;
-        const foundMount = stdout.indexOf(this.mount) !== -1;
+        const sshfsUrlMatch = this._sshfsUrl() + ' on';
+        const foundURL = stdout.indexOf(urlMatch) !== -1 || stdout.indexOf(sshfsUrlMatch) !== -1;
         return foundURL || foundMount;
     }
 
     async connect() {
         await this.testSSH();
         const { sshfsFlags } = this._sshOpts();
+        const sshfsUrl = this._sshfsUrl();
+        const absoluteMount = this._absoluteMount();
         try {
             if (this.authType === 'password') {
                 const password = this._decryptPassword();
-                const args = [String(SSH_TIMEOUT), 'sshfs', ...sshfsFlags, '-o', 'password_stdin', this.url, this.mount];
+                const args = [String(SSH_TIMEOUT), 'sshfs', ...sshfsFlags, '-o', 'password_stdin', sshfsUrl, absoluteMount];
                 await new Promise((resolve, reject) => {
                     const proc = child_process.spawn('timeout', args, {
                         stdio: ['pipe', 'pipe', 'pipe']
@@ -75,7 +98,7 @@ class Target {
                 });
             } else {
                 const flagStr = sshfsFlags.length ? sshfsFlags.join(' ') + ' ' : '';
-                await exec(`timeout ${SSH_TIMEOUT} sshfs ${flagStr}${this.url} ${this.mount}`);
+                await exec(`timeout ${SSH_TIMEOUT} sshfs ${flagStr}${sshfsUrl} ${absoluteMount}`);
             }
         } catch (e) {
             try {
@@ -85,6 +108,41 @@ class Target {
                 // clean up after itself.
             }
             throw e;
+        }
+
+        // Verify the mount actually took effect
+        await this.verifyMount();
+    }
+
+    async verifyMount() {
+        const absoluteMount = this._absoluteMount();
+
+        // Check 1: mount point should appear in mount output
+        const { stdout } = await exec('mount');
+        if (stdout.indexOf(absoluteMount) === -1) {
+            throw new Error(`Mount verification failed: ${absoluteMount} not found in mount table. sshfs may have exited without mounting.`);
+        }
+
+        // Check 2: filesystem stats should indicate a remote mount (different device)
+        try {
+            const mountStat = fs.statfsSync(absoluteMount);
+            const localStat = fs.statfsSync(os.homedir());
+            // If the filesystem type or total block count is identical to the local drive,
+            // and the mount's total size matches the local drive, it's likely not mounted
+            if (mountStat.type === localStat.type &&
+                mountStat.blocks === localStat.blocks &&
+                mountStat.bsize === localStat.bsize) {
+                // Clean up the failed mount
+                try { await this.disconnect(); } catch {}
+                throw new Error(
+                    `Mount verification failed: ${absoluteMount} appears to show the local filesystem ` +
+                    `(same device stats as /). The remote mount may not have attached correctly.`
+                );
+            }
+        } catch (e) {
+            // If it's our own verification error, re-throw it
+            if (e.message.startsWith('Mount verification failed')) throw e;
+            // statfsSync not available or errored — skip this check
         }
     }
 
@@ -104,8 +162,10 @@ class Target {
     }
 
     _decryptPassword() {
-        const credPath = configDir + '/' + this.name + '/credential';
-        const encrypted = fs.readFileSync(credPath);
+        if (!this.credential) {
+            throw new Error('No credential stored for ' + this.name);
+        }
+        const encrypted = Buffer.from(this.credential, 'base64');
         return safeStorage.decryptString(encrypted);
     }
 
@@ -114,7 +174,7 @@ class Target {
         const lines = stdout.split('\n');
         const filteredGrep = lines.filter(l => !l.includes('grep '));
         const filteredURLs = filteredGrep.filter(l => l.includes(this.url));
-        const absoluteMount = untildify(this.mount);
+        const absoluteMount = this._absoluteMount();
         const filteredMount = filteredURLs.filter(l => l.includes(absoluteMount));
         const line = filteredMount[0];
         const parts = line.split(' ');
@@ -123,7 +183,7 @@ class Target {
     }
 
     async disconnect() {
-        const mountPath = untildify(this.mount);
+        const mountPath = this._absoluteMount();
         try {
             await exec(`umount ${mountPath}`);
         } catch (e) {
@@ -143,70 +203,33 @@ class Target {
 }
 
 
-export function fetchOrCreateEmptyConfig() {
-    try {
-        return fetchConfig();
-    } catch (error) {
-        console.log(error);
-        createEmptyConfig();
-        return [];
+// --- JSON config read/write helpers ---
+
+function readConfig() {
+    const raw = fs.readFileSync(configPath, { encoding: 'utf8' });
+    return JSON.parse(raw);
+}
+
+function writeConfig(data) {
+    const json = JSON.stringify(data, null, 2) + '\n';
+    fs.writeFileSync(configPath, json, { encoding: 'utf8', mode: 0o600 });
+}
+
+function ensureConfigDir() {
+    if (!fs.existsSync(configDir)) {
+        fs.mkdirSync(configDir);
     }
 }
 
-function fetchConfig() {
-    const config = [];
-    const targetNames = fs.readdirSync(configDir, { withFileTypes: true })
-        .filter(item => item.isDirectory())
-        .filter(item => !item.name.startsWith('.'))
-        .map(item => item.name);
-    for (const name of targetNames) {
-        const base = configDir + '/' + name + '/';
-        const targetURL = fs.readFileSync(base + "target", { encoding: 'utf8' }).trim();
-        const targetMount = fs.readFileSync(base + "mount", { encoding: 'utf8' }).trim();
-        let authType = 'key';
-        try {
-            authType = fs.readFileSync(base + "auth", { encoding: 'utf8' }).trim();
-        } catch {
-            // Default to key-based auth for backward compatibility
-        }
-        let port = '';
-        try {
-            port = fs.readFileSync(base + "port", { encoding: 'utf8' }).trim();
-        } catch {
-            // Default to empty (use SSH default port 22)
-        }
-        let identityFile = '';
-        try {
-            identityFile = fs.readFileSync(base + "identity", { encoding: 'utf8' }).trim();
-        } catch {
-            // Default to empty (use SSH default key search)
-        }
-        let sshOptions = '';
-        try {
-            sshOptions = fs.readFileSync(base + "sshoptions", { encoding: 'utf8' }).trim();
-        } catch {
-            // Default to empty (no extra SSH options)
-        }
-        let autoconnect = false;
-        try {
-            autoconnect = fs.readFileSync(base + "autoconnect", { encoding: 'utf8' }).trim() === 'true';
-        } catch {
-            // Default to false (no auto-connect)
-        }
-        const t = new Target(name, targetURL, targetMount, authType, port, identityFile, sshOptions, autoconnect)
-        config.push(t);
-    }
-    return config;
-}
 
-function createEmptyConfig() {
-    fs.mkdirSync(configDir);
-}
+// --- Migration from flat files to JSON ---
 
+function migrateFromFlatFiles() {
+    const targets = [];
+    const defaults = { ...DEFAULT_DEFAULTS };
 
-export function fetchDefaults() {
+    // Migrate defaults from .defaults/ directory
     const defaultsDir = configDir + '/.defaults';
-    const defaults = { mountroot: '', identity: '', sshoptions: '', port: '' };
     for (const key of Object.keys(defaults)) {
         try {
             defaults[key] = fs.readFileSync(defaultsDir + '/' + key, { encoding: 'utf8' }).trim();
@@ -214,7 +237,119 @@ export function fetchDefaults() {
             // Missing file — keep empty default
         }
     }
-    return defaults;
+
+    // Migrate targets from subdirectories
+    let entries;
+    try {
+        entries = fs.readdirSync(configDir, { withFileTypes: true });
+    } catch {
+        return null;
+    }
+
+    const targetDirs = entries
+        .filter(item => item.isDirectory())
+        .filter(item => !item.name.startsWith('.'));
+
+    if (targetDirs.length === 0 && !fs.existsSync(defaultsDir)) {
+        return null; // Nothing to migrate
+    }
+
+    for (const dir of targetDirs) {
+        const name = dir.name;
+        const base = configDir + '/' + name + '/';
+        try {
+            const url = fs.readFileSync(base + 'target', { encoding: 'utf8' }).trim();
+            const mount = fs.readFileSync(base + 'mount', { encoding: 'utf8' }).trim();
+
+            let authType = 'key';
+            try { authType = fs.readFileSync(base + 'auth', { encoding: 'utf8' }).trim(); } catch {}
+
+            let port = '';
+            try { port = fs.readFileSync(base + 'port', { encoding: 'utf8' }).trim(); } catch {}
+
+            let identityFile = '';
+            try { identityFile = fs.readFileSync(base + 'identity', { encoding: 'utf8' }).trim(); } catch {}
+
+            let sshOptions = '';
+            try { sshOptions = fs.readFileSync(base + 'sshoptions', { encoding: 'utf8' }).trim(); } catch {}
+
+            let autoconnect = false;
+            try { autoconnect = fs.readFileSync(base + 'autoconnect', { encoding: 'utf8' }).trim() === 'true'; } catch {}
+
+            let credential = null;
+            if (authType === 'password') {
+                try {
+                    const encrypted = fs.readFileSync(base + 'credential');
+                    credential = encrypted.toString('base64');
+                } catch {}
+            }
+
+            targets.push({ name, url, mount, authType, port, identityFile, sshOptions, autoconnect, credential });
+        } catch {
+            // Skip directories that don't have required files
+        }
+    }
+
+    return { defaults, targets };
+}
+
+
+// --- Public API ---
+
+export function fetchOrCreateEmptyConfig() {
+    try {
+        ensureConfigDir();
+
+        if (fs.existsSync(configPath)) {
+            const data = readConfig();
+            return (data.targets || []).map(t =>
+                new Target(t.name, t.url, t.mount, t.authType, t.port, t.identityFile, t.sshOptions, t.autoconnect, t.credential)
+            );
+        }
+
+        // Try migration from flat files
+        const migrated = migrateFromFlatFiles();
+        if (migrated) {
+            writeConfig(migrated);
+            return migrated.targets.map(t =>
+                new Target(t.name, t.url, t.mount, t.authType, t.port, t.identityFile, t.sshOptions, t.autoconnect, t.credential)
+            );
+        }
+
+        // Fresh install — create empty config
+        writeConfig({ defaults: { ...DEFAULT_DEFAULTS }, targets: [] });
+        return [];
+    } catch (error) {
+        console.log(error);
+        ensureConfigDir();
+        writeConfig({ defaults: { ...DEFAULT_DEFAULTS }, targets: [] });
+        return [];
+    }
+}
+
+
+export function fetchDefaults() {
+    try {
+        ensureConfigDir();
+        if (fs.existsSync(configPath)) {
+            const data = readConfig();
+            return { ...DEFAULT_DEFAULTS, ...(data.defaults || {}) };
+        }
+    } catch {}
+    return { ...DEFAULT_DEFAULTS };
+}
+
+
+export function saveDefaults(defaults) {
+    ensureConfigDir();
+    let data;
+    try {
+        data = readConfig();
+    } catch {
+        data = { defaults: { ...DEFAULT_DEFAULTS }, targets: [] };
+    }
+    data.defaults = { ...DEFAULT_DEFAULTS, ...defaults };
+    writeConfig(data);
 }
 
 
@@ -232,30 +367,27 @@ export function generateMountPath(url, mountRoot) {
     // Build: mountroot/user@host_lastpart (or just user@host if no path)
     const dirName = lastPart ? `${userHost}_${lastPart}` : userHost;
     // Sanitize: replace characters that are problematic in directory names
-    const safeName = dirName.replace(/[\/\\:*?"<>|]/g, '_');
+    const safeName = dirName.replace(/@/g, '_at_').replace(/[\/\\:*?"<>|]/g, '_');
     return root + '/' + safeName;
 }
 
 export function addTarget(name, url, mount, authType = 'key', password = null, port = '', identityFile = '', sshOptions = '', autoconnect = false) {
-    const targetBase = configDir + '/' + name;
-    fs.mkdirSync(targetBase);
-    fs.writeFileSync(targetBase + "/target", url, { encoding: 'utf8' });
-    fs.writeFileSync(targetBase + "/mount", mount, { encoding: 'utf8' });
-    fs.writeFileSync(targetBase + "/auth", authType, { encoding: 'utf8' });
+    ensureConfigDir();
+    let data;
+    try {
+        data = readConfig();
+    } catch {
+        data = { defaults: { ...DEFAULT_DEFAULTS }, targets: [] };
+    }
+
+    let credential = null;
     if (authType === 'password' && password) {
         const encrypted = safeStorage.encryptString(password);
-        fs.writeFileSync(targetBase + "/credential", encrypted, { mode: 0o600 });
+        credential = encrypted.toString('base64');
     }
-    if (port) {
-        fs.writeFileSync(targetBase + "/port", port, { encoding: 'utf8' });
-    }
-    if (identityFile) {
-        fs.writeFileSync(targetBase + "/identity", identityFile, { encoding: 'utf8' });
-    }
-    if (sshOptions) {
-        fs.writeFileSync(targetBase + "/sshoptions", sshOptions, { encoding: 'utf8' });
-    }
-    fs.writeFileSync(targetBase + "/autoconnect", autoconnect ? 'true' : 'false', { encoding: 'utf8' });
+
+    data.targets.push({ name, url, mount, authType, port, identityFile, sshOptions, autoconnect, credential });
+    writeConfig(data);
 
     const absolutePath = untildify(mount);
     if (!fs.existsSync(absolutePath)) {
@@ -284,7 +416,8 @@ export async function testSSHConnection(url, port, identityFile, authType, passw
         sshFlags.push('-p', port);
     }
     if (identityFile) {
-        sshFlags.push('-i', identityFile);
+        const resolved = untildify(identityFile);
+        sshFlags.push('-i', resolved);
     }
     if (sshOptions) {
         const tokens = sshOptions.split(/\s+/).filter(Boolean);
@@ -302,6 +435,12 @@ export async function testSSHConnection(url, port, identityFile, authType, passw
 
 
 export function deleteTarget(name) {
-    const target = configDir + '/' + name;
-    fs.rmSync(target, {recursive: true});
+    let data;
+    try {
+        data = readConfig();
+    } catch {
+        return;
+    }
+    data.targets = data.targets.filter(t => t.name !== name);
+    writeConfig(data);
 }

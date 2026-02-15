@@ -25,12 +25,23 @@ function setInitialData(event, data) {
     passwordRow.style.display = isPassword ? '' : 'none';
     passwordInput.required = isPassword;
     autoconnectCheckbox.checked = data.autoconnect || false;
+    fitWindow();
+}
+
+function fitWindow() {
+    setTimeout(() => {
+        const rect = form.getBoundingClientRect();
+        const bodyStyle = getComputedStyle(document.body);
+        const bodyMargin = parseInt(bodyStyle.marginTop) + parseInt(bodyStyle.marginBottom);
+        window.electronAPI.resizeToContent(Math.ceil(rect.height + bodyMargin + form.offsetTop));
+    }, 0);
 }
 
 authSelect.addEventListener('change', () => {
     const isPassword = authSelect.value === 'password';
     passwordRow.style.display = isPassword ? '' : 'none';
     passwordInput.required = isPassword;
+    fitWindow();
 });
 
 function getFormData() {
@@ -50,11 +61,13 @@ function getFormData() {
 function showStatus(message, type) {
     statusMessage.textContent = message;
     statusMessage.className = type;
+    fitWindow();
 }
 
 function clearStatus() {
     statusMessage.textContent = '';
     statusMessage.className = '';
+    fitWindow();
 }
 
 function validatePort(port) {
@@ -156,3 +169,6 @@ testBtn.addEventListener('click', async () => {
     }
     testBtn.disabled = false;
 });
+
+// Initial fit on load
+fitWindow();

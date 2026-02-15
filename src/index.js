@@ -27,6 +27,8 @@ const iconConnecting = nativeImage.createFromPath(appPath + '/assets/connecting.
 const connectionStates = new Map();
 // Item counts after mount: target.name → number
 const mountItemCounts = new Map();
+// Last error per target: target.name → string
+const lastErrors = new Map();
 
 app.whenReady().then(main);
 
@@ -52,11 +54,15 @@ async function main() {
                 try {
                     await target.connect();
                     connectionStates.set(target.name, 'connected');
+                    lastErrors.delete(target.name);
                     const count = await waitForMountContent(target.mount);
                     if (count > 0) mountItemCounts.set(target.name, count);
                 } catch (e) {
                     connectionStates.set(target.name, 'disconnected');
-                    console.error(`Auto-connect failed for ${target.name}:`, e.message);
+                    const errMsg = `Auto-connect failed for ${target.name}: ${e.message}`;
+                    lastErrors.set(target.name, errMsg);
+                    console.error(errMsg);
+                    await window.create('src/renderer/error.html', 480, 160, errMsg);
                 }
             }
         }
@@ -93,6 +99,9 @@ async function main() {
         } catch (e) {
             return { success: false, error: e.message };
         }
+    });
+    ipcMain.on('save-settings', (event, data) => {
+        config.saveDefaults(data);
     });
     app.on('window-all-closed', () => {
         updateTray(tray);
@@ -160,63 +169,92 @@ async function updateTray(tray) {
         }
         if (target.autoconnect) statusLabel += ' (auto)';
 
-        items.push({
-            label: target.name,
-            submenu: [
-                {
-                    icon: statusIcon,
-                    label: statusLabel,
-                    enabled: false,
-                },
-                {
-                    label: isConnecting ? 'Connecting...' : (connected ? 'Disconnect' : 'Connect'),
-                    enabled: !isConnecting,
-                    click: async () => {
-                        const currentlyConnected = await target.status();
-                        if (currentlyConnected) {
+        const submenuItems = [
+            {
+                icon: statusIcon,
+                label: statusLabel,
+                enabled: false,
+            },
+            {
+                label: isConnecting ? 'Connecting...' : (connected ? 'Disconnect' : 'Connect'),
+                enabled: !isConnecting,
+                click: async () => {
+                    const currentlyConnected = await target.status();
+                    if (currentlyConnected) {
+                        try {
                             await target.disconnect();
                             connectionStates.set(target.name, 'disconnected');
                             mountItemCounts.delete(target.name);
-                        } else {
-                            connectionStates.set(target.name, 'connecting');
-                            await updateTray(tray);
-                            try {
-                                await target.connect();
-                                connectionStates.set(target.name, 'connected');
-                                const count = await waitForMountContent(target.mount);
-                                if (count > 0) mountItemCounts.set(target.name, count);
-                            } catch (e) {
-                                connectionStates.set(target.name, 'disconnected');
-                                await window.create('src/renderer/error.html', 320, 120, e.message);
-                            }
+                            lastErrors.delete(target.name);
+                        } catch (e) {
+                            const errMsg = `Disconnect failed: ${e.message}`;
+                            lastErrors.set(target.name, errMsg);
+                            await window.create('src/renderer/error.html', 480, 160, errMsg);
                         }
-                        updateTray(tray);
-                    },
-                },
-                {
-                    label: 'Open Folder',
-                    enabled: !isConnecting,
-                    click: () => {
-                        child_process.execSync('open ' + target.mount);
-                    },
-                },
-                {
-                    label: 'Edit',
-                    enabled: !connected && !isConnecting,
-                    click: async () => {
-                        await window.create('src/renderer/edit.html', 360, 430, target);
-                    },
-                },
-                {
-                    label: 'Delete',
-                    click: async () => {
-                        config.deleteTarget(target.name);
-                        connectionStates.delete(target.name);
-                        mountItemCounts.delete(target.name);
+                    } else {
+                        connectionStates.set(target.name, 'connecting');
+                        lastErrors.delete(target.name);
                         await updateTray(tray);
-                    },
+                        try {
+                            await target.connect();
+                            connectionStates.set(target.name, 'connected');
+                            const count = await waitForMountContent(target.mount);
+                            if (count > 0) mountItemCounts.set(target.name, count);
+                        } catch (e) {
+                            connectionStates.set(target.name, 'disconnected');
+                            lastErrors.set(target.name, e.message);
+                            await window.create('src/renderer/error.html', 480, 160, e.message);
+                        }
+                    }
+                    updateTray(tray);
                 },
-            ],
+            },
+            {
+                label: 'Open Folder',
+                enabled: !isConnecting,
+                click: () => {
+                    const absoluteMount = untildify(target.mount);
+                    child_process.execSync(`open "${absoluteMount}"`);
+                },
+            },
+            {
+                label: 'Edit',
+                enabled: !connected && !isConnecting,
+                click: async () => {
+                    await window.create('src/renderer/edit.html', 560, 100, target);
+                },
+            },
+            {
+                label: 'Delete',
+                click: async () => {
+                    config.deleteTarget(target.name);
+                    connectionStates.delete(target.name);
+                    mountItemCounts.delete(target.name);
+                    lastErrors.delete(target.name);
+                    await updateTray(tray);
+                },
+            },
+        ];
+
+        // Show last error if there is one
+        const lastError = lastErrors.get(target.name);
+        if (lastError) {
+            submenuItems.push({ type: 'separator' });
+            submenuItems.push({
+                label: 'Last Error: ' + (lastError.length > 60 ? lastError.substring(0, 60) + '...' : lastError),
+                enabled: false,
+            });
+            submenuItems.push({
+                label: 'Show Full Error',
+                click: async () => {
+                    await window.create('src/renderer/error.html', 480, 160, lastError);
+                },
+            });
+        }
+
+        items.push({
+            label: target.name,
+            submenu: submenuItems,
         })
     }
 
@@ -225,7 +263,13 @@ async function updateTray(tray) {
         {
             label: 'Add',
             click: async () => {
-                await window.create('src/renderer/add.html', 360, 400, config.fetchDefaults());
+                await window.create('src/renderer/add.html', 560, 100, config.fetchDefaults());
+            },
+        },
+        {
+            label: 'Settings',
+            click: async () => {
+                await window.create('src/renderer/settings.html', 560, 100, config.fetchDefaults());
             },
         },
         { label: 'Quit', click: app.quit },

@@ -11,42 +11,52 @@ form {
 label,
 input,
 select {
-    display: inline-block;
+    box-sizing: border-box;
 }
 
 label {
-    width: 30%;
+    display: block;
+    float: left;
+    clear: left;
+    width: 25%;
     text-align: right;
+    padding-right: 8px;
+    line-height: 24px;
 }
 
 label+input,
 label+select {
-    width: 46%;
-    margin: 0 10% 2% 4%;
+    display: block;
+    width: 73%;
+    margin: 0 0 6px 0;
+    line-height: 20px;
 }
 
 #password-row label {
-    width: 30%;
+    width: 25%;
     text-align: right;
+    padding-right: 8px;
 }
 
 #password-row input {
-    width: 46%;
-    margin: 0 10% 2% 4%;
+    display: block;
+    width: 73%;
+    margin: 0 0 6px 0;
 }
 
 #autoconnect-row label {
-    width: 30%;
+    width: 25%;
     text-align: right;
+    padding-right: 8px;
 }
 
 #autoconnect-row input[type="checkbox"] {
     width: auto;
-    margin: 0 10% 2% 4%;
+    margin: 4px 0 6px 0;
 }
 
 #status-message {
-    margin: 8px 0;
+    margin: 8px 0 8px 25%;
     padding: 6px 10px;
     border-radius: 4px;
     font-size: 12px;
@@ -74,6 +84,7 @@ label+select {
 }
 
 #button-row {
+    clear: both;
     text-align: right;
     margin-top: 8px;
 }
@@ -89,7 +100,7 @@ input[type="submit"] {
 .help-text {
     font-size: 10px;
     color: #888;
-    margin: -4px 10% 6px 34%;
+    margin: -4px 0 6px 25%;
 }
 .help-text code {
     background: #f0f0f0;

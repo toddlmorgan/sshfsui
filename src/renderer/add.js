@@ -21,10 +21,21 @@ mountInput.addEventListener('input', () => {
     mountManuallyEdited = true;
 });
 
+function fitWindow() {
+    // Use setTimeout to let the DOM settle after changes
+    setTimeout(() => {
+        const rect = form.getBoundingClientRect();
+        const bodyStyle = getComputedStyle(document.body);
+        const bodyMargin = parseInt(bodyStyle.marginTop) + parseInt(bodyStyle.marginBottom);
+        window.electronAPI.resizeToContent(Math.ceil(rect.height + bodyMargin + form.offsetTop));
+    }, 0);
+}
+
 authSelect.addEventListener('change', () => {
     const isPassword = authSelect.value === 'password';
     passwordRow.style.display = isPassword ? '' : 'none';
     passwordInput.required = isPassword;
+    fitWindow();
 });
 
 function getFormData() {
@@ -43,11 +54,13 @@ function getFormData() {
 function showStatus(message, type) {
     statusMessage.textContent = message;
     statusMessage.className = type;
+    fitWindow();
 }
 
 function clearStatus() {
     statusMessage.textContent = '';
     statusMessage.className = '';
+    fitWindow();
 }
 
 function validatePort(port) {
@@ -63,7 +76,7 @@ function generateMountPath(url) {
     const pathParts = remotePath.split('/').filter(Boolean);
     const lastPart = pathParts.length > 0 ? pathParts[pathParts.length - 1] : '';
     const dirName = lastPart ? `${userHost}_${lastPart}` : userHost;
-    const safeName = dirName.replace(/[\/\\:*?"<>|]/g, '_');
+    const safeName = dirName.replace(/@/g, '_at_').replace(/[\/\\:*?"<>|]/g, '_');
     return mountRoot + '/' + safeName;
 }
 
@@ -170,3 +183,6 @@ testBtn.addEventListener('click', async () => {
     }
     testBtn.disabled = false;
 });
+
+// Initial fit on load
+fitWindow();
