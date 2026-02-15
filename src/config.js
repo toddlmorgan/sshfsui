@@ -12,9 +12,43 @@ const exec = util.promisify(child_process.exec)
 
 const configDir = os.homedir() + '/.sshfsui'
 const configPath = configDir + '/config.json'
+const logPath = configDir + '/sshfsui.log'
 const SSH_TIMEOUT = 15
+const MOUNT_VERIFY_RETRIES = 6
+const MOUNT_VERIFY_INTERVAL = 500
 
 const DEFAULT_DEFAULTS = { mountroot: '', identity: '', sshoptions: '', port: '' };
+
+
+// --- Logging ---
+
+function log(level, message) {
+    const timestamp = new Date().toISOString();
+    const line = `${timestamp} [${level}] ${message}\n`;
+    try {
+        ensureConfigDir();
+        fs.appendFileSync(logPath, line, { encoding: 'utf8' });
+    } catch {}
+    if (level === 'ERROR') {
+        console.error(line.trim());
+    } else {
+        console.log(line.trim());
+    }
+}
+
+export function getLogPath() {
+    return logPath;
+}
+
+export function readLogTail(lines = 100) {
+    try {
+        const content = fs.readFileSync(logPath, { encoding: 'utf8' });
+        const allLines = content.split('\n');
+        return allLines.slice(-lines).join('\n');
+    } catch {
+        return '(no log file found)';
+    }
+}
 
 
 class Target {
@@ -71,18 +105,49 @@ class Target {
         const urlMatch = this.url + ' on';
         const sshfsUrlMatch = this._sshfsUrl() + ' on';
         const foundURL = stdout.indexOf(urlMatch) !== -1 || stdout.indexOf(sshfsUrlMatch) !== -1;
-        return foundURL || foundMount;
+
+        if (!foundURL && !foundMount) return false;
+
+        // Mount entry exists in table — probe it to check for stale FUSE mounts.
+        // A dead sshfs daemon leaves a mount entry but any I/O returns EIO or ENOTCONN.
+        try {
+            fs.readdirSync(absoluteMount);
+            return true;
+        } catch (e) {
+            // ENOTCONN (errno -107 Linux, code ENOTCONN) or EIO = stale FUSE mount
+            if (e.code === 'ENOTCONN' || e.code === 'EIO') {
+                log('WARN', `[${this.name}] Stale FUSE mount detected at ${absoluteMount} (${e.code}), cleaning up`);
+                try { await this.forceCleanup(); } catch (cleanupErr) {
+                    log('ERROR', `[${this.name}] Stale mount cleanup failed: ${cleanupErr.message}`);
+                }
+                return false;
+            }
+            // EACCES or other errors — mount may be alive but unreadable, treat as connected
+            return true;
+        }
     }
 
     async connect() {
+        log('INFO', `[${this.name}] Starting connection to ${this.url}`);
+        log('INFO', `[${this.name}] Auth type: ${this.authType}, mount: ${this.mount}`);
+
         await this.testSSH();
+        log('INFO', `[${this.name}] SSH test passed`);
+
         const { sshfsFlags } = this._sshOpts();
         const sshfsUrl = this._sshfsUrl();
         const absoluteMount = this._absoluteMount();
+
+        log('INFO', `[${this.name}] sshfs URL: ${sshfsUrl}, absolute mount: ${absoluteMount}`);
+        if (sshfsFlags.length) {
+            log('INFO', `[${this.name}] sshfs flags: ${sshfsFlags.join(' ')}`);
+        }
+
         try {
             if (this.authType === 'password') {
                 const password = this._decryptPassword();
                 const args = [String(SSH_TIMEOUT), 'sshfs', ...sshfsFlags, '-o', 'password_stdin', sshfsUrl, absoluteMount];
+                log('INFO', `[${this.name}] Running: timeout ${args.join(' ')} (password via stdin)`);
                 await new Promise((resolve, reject) => {
                     const proc = child_process.spawn('timeout', args, {
                         stdio: ['pipe', 'pipe', 'pipe']
@@ -92,15 +157,28 @@ class Target {
                     let stderr = '';
                     proc.stderr.on('data', (data) => { stderr += data; });
                     proc.on('close', (code) => {
-                        if (code === 0) resolve();
-                        else reject(new Error(stderr || `sshfs exited with code ${code}`));
+                        if (code === 0) {
+                            log('INFO', `[${this.name}] sshfs process exited with code 0`);
+                            if (stderr.trim()) log('WARN', `[${this.name}] sshfs stderr: ${stderr.trim()}`);
+                            resolve();
+                        } else {
+                            log('ERROR', `[${this.name}] sshfs exited with code ${code}: ${stderr}`);
+                            reject(new Error(stderr || `sshfs exited with code ${code}`));
+                        }
                     });
                 });
             } else {
                 const flagStr = sshfsFlags.length ? sshfsFlags.join(' ') + ' ' : '';
-                await exec(`timeout ${SSH_TIMEOUT} sshfs ${flagStr}${sshfsUrl} ${absoluteMount}`);
+                const cmd = `timeout ${SSH_TIMEOUT} sshfs ${flagStr}${sshfsUrl} "${absoluteMount}"`;
+                log('INFO', `[${this.name}] Running: ${cmd}`);
+                const result = await exec(cmd);
+                log('INFO', `[${this.name}] sshfs process completed`);
+                if (result.stderr && result.stderr.trim()) {
+                    log('WARN', `[${this.name}] sshfs stderr: ${result.stderr.trim()}`);
+                }
             }
         } catch (e) {
+            log('ERROR', `[${this.name}] sshfs command failed: ${e.message}`);
             try {
                 await this.disconnect();
             } catch {
@@ -110,40 +188,94 @@ class Target {
             throw e;
         }
 
-        // Verify the mount actually took effect
+        // sshfs daemonizes by default — the parent exits 0 before the mount is ready.
+        // We must wait for the mount to actually appear and verify it's real.
         await this.verifyMount();
     }
 
     async verifyMount() {
         const absoluteMount = this._absoluteMount();
+        log('INFO', `[${this.name}] Verifying mount at ${absoluteMount}...`);
 
-        // Check 1: mount point should appear in mount output
-        const { stdout } = await exec('mount');
-        if (stdout.indexOf(absoluteMount) === -1) {
-            throw new Error(`Mount verification failed: ${absoluteMount} not found in mount table. sshfs may have exited without mounting.`);
+        // Step 1: Wait for mount to appear in mount table (sshfs daemonizes, may take a moment)
+        let mountLine = null;
+        for (let i = 0; i < MOUNT_VERIFY_RETRIES; i++) {
+            const { stdout } = await exec('mount');
+            const lines = stdout.split('\n');
+            mountLine = lines.find(l => l.includes(absoluteMount));
+            if (mountLine) break;
+            log('INFO', `[${this.name}] Mount not in table yet, retrying (${i + 1}/${MOUNT_VERIFY_RETRIES})...`);
+            await new Promise(r => setTimeout(r, MOUNT_VERIFY_INTERVAL));
         }
 
-        // Check 2: filesystem stats should indicate a remote mount (different device)
+        if (!mountLine) {
+            const msg = `Mount verification failed: ${absoluteMount} not found in mount table after ${MOUNT_VERIFY_RETRIES} attempts. sshfs may have daemonized but failed to mount.`;
+            log('ERROR', `[${this.name}] ${msg}`);
+            // Capture mount table and sshfs processes for diagnostics
+            try {
+                const { stdout: mountOut } = await exec('mount');
+                log('ERROR', `[${this.name}] Full mount table:\n${mountOut}`);
+            } catch {}
+            try {
+                const { stdout: psOut } = await exec('ps aux | grep sshfs');
+                log('ERROR', `[${this.name}] sshfs processes:\n${psOut}`);
+            } catch {}
+            throw new Error(msg);
+        }
+        log('INFO', `[${this.name}] Mount found in table: ${mountLine.trim()}`);
+
+        // Step 2: Compare disk size via df — if it matches the local disk, the mount is bogus
         try {
-            const mountStat = fs.statfsSync(absoluteMount);
-            const localStat = fs.statfsSync(os.homedir());
-            // If the filesystem type or total block count is identical to the local drive,
-            // and the mount's total size matches the local drive, it's likely not mounted
-            if (mountStat.type === localStat.type &&
-                mountStat.blocks === localStat.blocks &&
-                mountStat.bsize === localStat.bsize) {
-                // Clean up the failed mount
-                try { await this.disconnect(); } catch {}
-                throw new Error(
-                    `Mount verification failed: ${absoluteMount} appears to show the local filesystem ` +
-                    `(same device stats as /). The remote mount may not have attached correctly.`
-                );
+            const { stdout: dfMount } = await exec(`df -k "${absoluteMount}"`);
+            const { stdout: dfLocal } = await exec(`df -k "${os.homedir()}"`);
+
+            const mountDf = parseDfOutput(dfMount);
+            const localDf = parseDfOutput(dfLocal);
+
+            log('INFO', `[${this.name}] df mount: ${JSON.stringify(mountDf)}`);
+            log('INFO', `[${this.name}] df local: ${JSON.stringify(localDf)}`);
+
+            if (mountDf && localDf) {
+                // If the filesystem device is the same, the remote mount didn't take effect
+                if (mountDf.filesystem === localDf.filesystem) {
+                    try { await this.forceCleanup(); } catch {}
+                    const msg = `Mount verification failed: ${absoluteMount} is on the same filesystem as your local disk (${mountDf.filesystem}). The remote mount did not attach — check that macFUSE/FUSE-T is installed and working.`;
+                    log('ERROR', `[${this.name}] ${msg}`);
+                    throw new Error(msg);
+                }
+
+                // If total size is suspiciously close to local disk (within 1%), warn
+                const sizeDiffRatio = Math.abs(mountDf.totalKB - localDf.totalKB) / localDf.totalKB;
+                if (sizeDiffRatio < 0.01 && mountDf.totalKB > 0) {
+                    try { await this.forceCleanup(); } catch {}
+                    const localGB = (localDf.totalKB / 1048576).toFixed(1);
+                    const mountGB = (mountDf.totalKB / 1048576).toFixed(1);
+                    const msg = `Mount verification failed: ${absoluteMount} reports ${mountGB} GB total, same as local disk (${localGB} GB). The remote mount likely did not attach.`;
+                    log('ERROR', `[${this.name}] ${msg}`);
+                    throw new Error(msg);
+                }
+
+                const mountGB = (mountDf.totalKB / 1048576).toFixed(1);
+                const availGB = (mountDf.availKB / 1048576).toFixed(1);
+                log('INFO', `[${this.name}] Remote filesystem: ${mountGB} GB total, ${availGB} GB available`);
             }
         } catch (e) {
-            // If it's our own verification error, re-throw it
             if (e.message.startsWith('Mount verification failed')) throw e;
-            // statfsSync not available or errored — skip this check
+            log('WARN', `[${this.name}] df comparison failed (non-fatal): ${e.message}`);
         }
+
+        // Step 3: Try to list directory contents
+        try {
+            const entries = fs.readdirSync(absoluteMount);
+            log('INFO', `[${this.name}] Mount directory contains ${entries.length} items`);
+            if (entries.length === 0) {
+                log('WARN', `[${this.name}] Mount directory is empty — remote path may be empty or incorrect`);
+            }
+        } catch (e) {
+            log('WARN', `[${this.name}] Could not read mount directory: ${e.message}`);
+        }
+
+        log('INFO', `[${this.name}] Mount verification passed`);
     }
 
     async testSSH() {
@@ -151,6 +283,7 @@ class Target {
         const host = parts[0];
         const { sshFlags } = this._sshOpts();
         const flagStr = sshFlags.length ? sshFlags.join(' ') + ' ' : '';
+        log('INFO', `[${this.name}] Testing SSH to ${host}...`);
         if (this.authType === 'password') {
             const password = this._decryptPassword();
             await exec(`sshpass -e timeout ${SSH_TIMEOUT} ssh ${flagStr}${host} echo ping`, {
@@ -169,37 +302,113 @@ class Target {
         return safeStorage.decryptString(encrypted);
     }
 
-    async cleanupSSHFS() {
-        const { stdout } = await exec(`ps aux | grep sshfs`)
-        const lines = stdout.split('\n');
-        const filteredGrep = lines.filter(l => !l.includes('grep '));
-        const filteredURLs = filteredGrep.filter(l => l.includes(this.url));
-        const absoluteMount = this._absoluteMount();
-        const filteredMount = filteredURLs.filter(l => l.includes(absoluteMount));
-        const line = filteredMount[0];
-        const parts = line.split(' ');
-        const pid = parts[1];
-        kill(pid, 'SIGKILL');
+    async killSSHFSProcess() {
+        try {
+            const { stdout } = await exec(`ps aux | grep sshfs`);
+            const lines = stdout.split('\n');
+            const absoluteMount = this._absoluteMount();
+            const candidates = lines
+                .filter(l => !l.includes('grep '))
+                .filter(l => l.includes(this.url) || l.includes(absoluteMount));
+            for (const line of candidates) {
+                const parts = line.trim().split(/\s+/);
+                const pid = parseInt(parts[1], 10);
+                if (pid > 0) {
+                    log('INFO', `[${this.name}] Killing sshfs process ${pid}`);
+                    try { kill(pid, 'SIGKILL'); } catch {}
+                }
+            }
+        } catch {
+            // No matching processes — that's fine
+        }
+    }
+
+    async forceCleanup() {
+        const mountPath = this._absoluteMount();
+        log('INFO', `[${this.name}] Force cleanup of ${mountPath}`);
+
+        // Kill sshfs process first so umount can succeed
+        await this.killSSHFSProcess();
+
+        // Wait briefly for process to die
+        await new Promise(r => setTimeout(r, 300));
+
+        // Try each unmount method in order
+        const methods = [
+            `umount -f "${mountPath}"`,
+            `umount "${mountPath}"`,
+            ...(process.platform === 'darwin' ? [
+                `diskutil unmount force "${mountPath}"`,
+                `diskutil unmount "${mountPath}"`,
+            ] : []),
+        ];
+
+        let lastErr = null;
+        for (const cmd of methods) {
+            try {
+                await exec(cmd);
+                log('INFO', `[${this.name}] Cleanup succeeded with: ${cmd}`);
+                return;
+            } catch (e) {
+                lastErr = e;
+            }
+        }
+
+        // If mount is no longer in mount table, cleanup is effectively done
+        try {
+            const { stdout } = await exec('mount');
+            if (stdout.indexOf(mountPath) === -1) {
+                log('INFO', `[${this.name}] Mount entry already gone from mount table`);
+                return;
+            }
+        } catch {}
+
+        log('WARN', `[${this.name}] All cleanup methods failed: ${lastErr?.message}`);
+        throw new Error(`Could not clean up stale mount at ${mountPath}: ${lastErr?.message}`);
     }
 
     async disconnect() {
         const mountPath = this._absoluteMount();
+        log('INFO', `[${this.name}] Disconnecting ${mountPath}`);
         try {
-            await exec(`umount ${mountPath}`);
-        } catch (e) {
-            // On macOS, umount often fails with "Resource busy" for FUSE mounts
-            if (process.platform === 'darwin') {
-                try {
-                    await exec(`diskutil unmount ${mountPath}`);
-                } catch {
-                    // Force unmount as last resort
-                    await exec(`diskutil unmount force ${mountPath}`);
-                }
-            } else {
-                throw e;
-            }
+            await exec(`umount "${mountPath}"`);
+            log('INFO', `[${this.name}] Disconnected via umount`);
+            return;
+        } catch {}
+
+        if (process.platform === 'darwin') {
+            try {
+                await exec(`diskutil unmount "${mountPath}"`);
+                log('INFO', `[${this.name}] Disconnected via diskutil unmount`);
+                return;
+            } catch {}
+            try {
+                await exec(`diskutil unmount force "${mountPath}"`);
+                log('INFO', `[${this.name}] Disconnected via diskutil unmount force`);
+                return;
+            } catch {}
         }
+
+        // All standard methods failed — try full force cleanup (kill process + umount -f)
+        log('WARN', `[${this.name}] Standard unmount failed, attempting force cleanup`);
+        await this.forceCleanup();
     }
+}
+
+
+// Parse df -k output into { filesystem, totalKB, usedKB, availKB }
+function parseDfOutput(dfOutput) {
+    const lines = dfOutput.trim().split('\n');
+    if (lines.length < 2) return null;
+    // df -k output: Filesystem 1024-blocks Used Available Capacity ...
+    const parts = lines[1].split(/\s+/);
+    if (parts.length < 4) return null;
+    return {
+        filesystem: parts[0],
+        totalKB: parseInt(parts[1], 10),
+        usedKB: parseInt(parts[2], 10),
+        availKB: parseInt(parts[3], 10),
+    };
 }
 
 
@@ -311,6 +520,7 @@ export function fetchOrCreateEmptyConfig() {
         const migrated = migrateFromFlatFiles();
         if (migrated) {
             writeConfig(migrated);
+            log('INFO', `Migrated ${migrated.targets.length} targets from flat files to config.json`);
             return migrated.targets.map(t =>
                 new Target(t.name, t.url, t.mount, t.authType, t.port, t.identityFile, t.sshOptions, t.autoconnect, t.credential)
             );
@@ -320,7 +530,7 @@ export function fetchOrCreateEmptyConfig() {
         writeConfig({ defaults: { ...DEFAULT_DEFAULTS }, targets: [] });
         return [];
     } catch (error) {
-        console.log(error);
+        log('ERROR', `fetchOrCreateEmptyConfig failed: ${error.message}`);
         ensureConfigDir();
         writeConfig({ defaults: { ...DEFAULT_DEFAULTS }, targets: [] });
         return [];
@@ -350,6 +560,7 @@ export function saveDefaults(defaults) {
     }
     data.defaults = { ...DEFAULT_DEFAULTS, ...defaults };
     writeConfig(data);
+    log('INFO', `Defaults saved: ${JSON.stringify(data.defaults)}`);
 }
 
 
@@ -388,6 +599,7 @@ export function addTarget(name, url, mount, authType = 'key', password = null, p
 
     data.targets.push({ name, url, mount, authType, port, identityFile, sshOptions, autoconnect, credential });
     writeConfig(data);
+    log('INFO', `Target added: ${name} → ${url} at ${mount}`);
 
     const absolutePath = untildify(mount);
     if (!fs.existsSync(absolutePath)) {
@@ -443,4 +655,5 @@ export function deleteTarget(name) {
     }
     data.targets = data.targets.filter(t => t.name !== name);
     writeConfig(data);
+    log('INFO', `Target deleted: ${name}`);
 }

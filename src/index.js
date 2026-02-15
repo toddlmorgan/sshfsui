@@ -1,7 +1,7 @@
 import * as child_process from "child_process";
 
 import fixPath from 'fix-path';
-import { app, Tray, Menu, nativeImage, ipcMain } from 'electron'
+import { app, Tray, Menu, nativeImage, ipcMain, shell } from 'electron'
 import { promises as fs } from "fs";
 import { existsSync } from "fs";
 import commandExists from 'command-exists';
@@ -270,6 +270,13 @@ async function updateTray(tray) {
             label: 'Settings',
             click: async () => {
                 await window.create('src/renderer/settings.html', 560, 100, config.fetchDefaults());
+            },
+        },
+        {
+            label: 'View Log',
+            click: () => {
+                const logFile = config.getLogPath();
+                shell.showItemInFolder(logFile);
             },
         },
         { label: 'Quit', click: app.quit },
