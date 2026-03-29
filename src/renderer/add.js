@@ -71,6 +71,15 @@ function validatePort(port) {
     return !isNaN(p) && p >= 1 && p <= 65535 && String(p) === port;
 }
 
+function validateTargetName(name) {
+    if (!name || !name.trim()) return 'Name is required';
+    name = name.trim();
+    if (name.length > 64) return 'Name must be 64 characters or fewer';
+    if (/^\.+$/.test(name)) return 'Name cannot be only dots';
+    if (/[\/\\:*?"<>|,]/.test(name)) return 'Name contains invalid characters';
+    return null;
+}
+
 function generateMountPath(url) {
     const colonIdx = url.indexOf(':');
     const userHost = colonIdx !== -1 ? url.substring(0, colonIdx) : url;
@@ -116,6 +125,12 @@ form.addEventListener('submit', async function sendAddDataAndCloseWindow(event) 
     event.preventDefault();
     clearStatus();
     const data = getFormData();
+
+    const nameError = validateTargetName(data.name);
+    if (nameError) {
+        showStatus(nameError, 'error');
+        return false;
+    }
 
     if (data.port && !validatePort(data.port)) {
         showStatus('Port must be a number between 1 and 65535', 'error');
