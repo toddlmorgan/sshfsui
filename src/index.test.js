@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'assert';
-import { findMountLine, parseDfOutput, generateMountPath, Target } from './config.js';
+import { findMountLine, parseDfOutput, generateMountPath, Target, validateTargetName } from './config.js';
 
 // --- findMountLine ---
 
@@ -248,4 +248,43 @@ test('parseSSHString: bare user@host (no ssh prefix)', () => {
     const result = parseSSHString('user@host -p 2222');
     assert.strictEqual(result.host, 'user@host');
     assert.strictEqual(result.port, '2222');
+});
+
+
+// --- validateTargetName ---
+
+test('validateTargetName: valid simple name', () => {
+    assert.strictEqual(validateTargetName('my-server'), null);
+});
+
+test('validateTargetName: valid name with underscores and numbers', () => {
+    assert.strictEqual(validateTargetName('server_2'), null);
+});
+
+test('validateTargetName: valid name with spaces', () => {
+    assert.strictEqual(validateTargetName('my server'), null);
+});
+
+test('validateTargetName: rejects empty name', () => {
+    assert.ok(validateTargetName('') !== null);
+});
+
+test('validateTargetName: rejects name over 64 characters', () => {
+    assert.ok(validateTargetName('a'.repeat(65)) !== null);
+});
+
+test('validateTargetName: rejects name with slashes', () => {
+    assert.ok(validateTargetName('bad/name') !== null);
+});
+
+test('validateTargetName: rejects name with special characters', () => {
+    assert.ok(validateTargetName('bad<name>') !== null);
+});
+
+test('validateTargetName: rejects name that is only dots', () => {
+    assert.ok(validateTargetName('..') !== null);
+});
+
+test('validateTargetName: rejects name with commas (FUSE option separator)', () => {
+    assert.ok(validateTargetName('name,with,commas') !== null);
 });

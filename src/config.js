@@ -660,6 +660,15 @@ export function generateMountPath(url, mountRoot) {
     return root + '/' + safeName;
 }
 
+export function validateTargetName(name) {
+    if (!name || !name.trim()) return 'Name is required';
+    name = name.trim();
+    if (name.length > 64) return 'Name must be 64 characters or fewer';
+    if (/^\.+$/.test(name)) return 'Name cannot be only dots';
+    if (/[\/\\:*?"<>|,]/.test(name)) return 'Name contains invalid characters (no / \\ : * ? " < > | ,)';
+    return null;
+}
+
 export function addTarget(name, url, mount, authType = 'key', password = null, port = '', identityFile = '', sshOptions = '', autoconnect = false) {
     // Trim all string inputs to prevent trailing whitespace issues (e.g. sshfs path errors)
     name = (name || '').trim();
@@ -670,12 +679,21 @@ export function addTarget(name, url, mount, authType = 'key', password = null, p
     identityFile = (identityFile || '').trim();
     sshOptions = (sshOptions || '').trim();
 
+    // Validate name
+    const nameError = validateTargetName(name);
+    if (nameError) throw new Error(nameError);
+
     ensureConfigDir();
     let data;
     try {
         data = readConfig();
     } catch {
         data = { defaults: { ...DEFAULT_DEFAULTS }, targets: [] };
+    }
+
+    // Check for duplicate name
+    if (data.targets.some(t => t.name === name)) {
+        throw new Error(`A target named "${name}" already exists`);
     }
 
     let credential = null;
@@ -698,6 +716,64 @@ export function addTarget(name, url, mount, authType = 'key', password = null, p
                 sudo.exec(`mkdir "${absolutePath}"`, { name: 'sshfs' }, (e) => {
                     if (!e) {
                         const username = os.userInfo().username
+                        sudo.exec(`chown ${username}:${username} "${absolutePath}"`, { name: 'sshfs' }, () => {});
+                    }
+                });
+            }
+        }
+    }
+}
+
+
+export function updateTarget(initialName, name, url, mount, authType = 'key', password = null, port = '', identityFile = '', sshOptions = '', autoconnect = false) {
+    name = (name || '').trim();
+    url = (url || '').trim();
+    mount = (mount || '').trim();
+    authType = (authType || 'key').trim();
+    port = (port || '').trim();
+    identityFile = (identityFile || '').trim();
+    sshOptions = (sshOptions || '').trim();
+
+    const nameError = validateTargetName(name);
+    if (nameError) throw new Error(nameError);
+
+    ensureConfigDir();
+    let data;
+    try {
+        data = readConfig();
+    } catch {
+        data = { defaults: { ...DEFAULT_DEFAULTS }, targets: [] };
+    }
+
+    const idx = data.targets.findIndex(t => t.name === initialName);
+    if (idx === -1) throw new Error(`Target "${initialName}" not found`);
+
+    // Check for duplicate name (if renaming)
+    if (name !== initialName && data.targets.some(t => t.name === name)) {
+        throw new Error(`A target named "${name}" already exists`);
+    }
+
+    let credential = data.targets[idx].credential;
+    if (authType === 'password' && password) {
+        const encrypted = safeStorage.encryptString(password);
+        credential = encrypted.toString('base64');
+    } else if (authType !== 'password') {
+        credential = null;
+    }
+
+    data.targets[idx] = { name, url, mount, authType, port, identityFile, sshOptions, autoconnect, credential };
+    writeConfig(data);
+    log('INFO', `Target updated: ${initialName} → ${name} (${url} at ${mount})`);
+
+    const absolutePath = untildify(mount);
+    if (!fs.existsSync(absolutePath)) {
+        try {
+            fs.mkdirSync(absolutePath);
+        } catch (error) {
+            if (error.errno === -13) {
+                sudo.exec(`mkdir "${absolutePath}"`, { name: 'sshfs' }, (e) => {
+                    if (!e) {
+                        const username = os.userInfo().username;
                         sudo.exec(`chown ${username}:${username} "${absolutePath}"`, { name: 'sshfs' }, () => {});
                     }
                 });
