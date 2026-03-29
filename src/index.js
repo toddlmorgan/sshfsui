@@ -75,11 +75,19 @@ async function main() {
     await updateTray(tray);
 
     ipcMain.on('add', async (event, data) => {
-        config.addTarget(data.name, data.url, data.mount, data.authType, data.password, data.port, data.identityFile, data.sshOptions, data.autoconnect || false);
+        try {
+            config.addTarget(data.name, data.url, data.mount, data.authType, data.password, data.port, data.identityFile, data.sshOptions, data.autoconnect || false);
+        } catch (e) {
+            await window.create('src/renderer/error.html', 480, 160, e.message);
+        }
         await updateTray(tray);
     });
     ipcMain.on('edit', async (event, data) => {
-        config.updateTarget(data.initialName, data.target.name, data.target.url, data.target.mount, data.target.authType, data.target.password, data.target.port, data.target.identityFile, data.target.sshOptions, data.target.autoconnect || false);
+        try {
+            config.updateTarget(data.initialName, data.target.name, data.target.url, data.target.mount, data.target.authType, data.target.password, data.target.port, data.target.identityFile, data.target.sshOptions, data.target.autoconnect || false);
+        } catch (e) {
+            await window.create('src/renderer/error.html', 480, 160, e.message);
+        }
         await updateTray(tray);
     });
     ipcMain.handle('validate', (event, data) => {
