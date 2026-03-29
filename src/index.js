@@ -36,7 +36,7 @@ async function main() {
     fixPath();
     const error = await checkDependenciesAndMaybeReturnError();
     if (error) {
-        await window.create('src/renderer/error.html', 320, 120, error);
+        await window.create('src/renderer/error.html', 320, 120, { html: true, content: error });
         return;
     }
 
