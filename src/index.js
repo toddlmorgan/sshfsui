@@ -217,7 +217,7 @@ async function updateTray(tray) {
                 enabled: !isConnecting,
                 click: () => {
                     const absoluteMount = untildify(target.mount);
-                    child_process.execSync(`open "${absoluteMount}"`);
+                    child_process.spawn('open', [absoluteMount], { detached: true, stdio: 'ignore' });
                 },
             },
             {
