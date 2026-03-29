@@ -504,7 +504,7 @@ function writeConfig(data) {
 
 function ensureConfigDir() {
     if (!fs.existsSync(configDir)) {
-        fs.mkdirSync(configDir);
+        fs.mkdirSync(configDir, { mode: 0o700 });
     }
 }
 
