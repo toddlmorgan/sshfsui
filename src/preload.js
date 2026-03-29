@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron/renderer')
 
 contextBridge.exposeInMainWorld('electronAPI', {
     sendAdd: (data) => ipcRenderer.send('add', data),
-    onLoad: (handler) => ipcRenderer.on('load', handler),
+    onLoad: (handler) => ipcRenderer.once('load', handler),
     sendEdit: (data) => ipcRenderer.send('edit', data),
     sendSettings: (data) => ipcRenderer.send('save-settings', data),
     validateTarget: (data) => ipcRenderer.invoke('validate', data),
