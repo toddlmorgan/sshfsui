@@ -30,6 +30,11 @@ const mountItemCounts = new Map();
 // Last error per target: target.name → string
 const lastErrors = new Map();
 
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+    app.quit();
+}
+
 app.whenReady().then(main);
 
 async function main() {
