@@ -23,12 +23,6 @@ fi
 echo "Building app..."
 "$SCRIPT_DIR/build-local.sh"
 
-if [[ $? -ne 0 ]]; then
-    echo ""
-    echo "ERROR: Build failed. Aborting installation."
-    exit 1
-fi
-
 # Verify build output exists
 ZIP_PATH=$(find "$PROJECT_DIR/out/make/zip/darwin" -name "sshfsui-darwin-*.zip" 2>/dev/null | head -1)
 if [[ -z "$ZIP_PATH" ]]; then
